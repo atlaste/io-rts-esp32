@@ -22,6 +22,18 @@ using namespace Helpers;
 
 namespace Config
 {
+    void NetworkConfig::DeleteNetworkConfig()
+    {
+        NvsHelpers::DeleteValue(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_DHCP);
+        NvsHelpers::DeleteValue(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_HOSTNAME);
+        NvsHelpers::DeleteValue(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_IP_ADDR);
+        NvsHelpers::DeleteValue(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_IP_MASK);
+        NvsHelpers::DeleteValue(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_IP_GTW);
+        NvsHelpers::DeleteValue(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_DNS_MAIN);
+        NvsHelpers::DeleteValue(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_DNS_BACKUP);
+        NvsHelpers::DeleteValue(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_SNTP_SERVER);
+    }
+
     const std::string NetworkConfig::GetHostname()
     {
         std::string hostname = CONFIG_IP_LAYER_HOSTNAME;
@@ -31,6 +43,7 @@ namespace Config
 
     esp_err_t NetworkConfig::SetHostname(const std::string &hostname)
     {
+        if (hostname.length() > 32) return ESP_ERR_INVALID_ARG;
         return NvsHelpers::SetString(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_HOSTNAME, hostname);
     }
 
@@ -60,6 +73,9 @@ namespace Config
 
     esp_err_t NetworkConfig::SetIpAddress(const std::string &address)
     {
+        esp_ip4_addr_t tmp;
+        esp_err_t err = esp_netif_str_to_ip4(address.c_str(), &tmp);
+        if (err != ESP_OK) return err;
         return NvsHelpers::SetString(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_IP_ADDR, address);
     }
 
@@ -72,6 +88,9 @@ namespace Config
 
     esp_err_t NetworkConfig::SetNetworkMask(const std::string &mask)
     {
+        esp_ip4_addr_t tmp;
+        esp_err_t err = esp_netif_str_to_ip4(mask.c_str(), &tmp);
+        if (err != ESP_OK) return err;
         return NvsHelpers::SetString(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_IP_MASK, mask);
     }
 
@@ -84,6 +103,9 @@ namespace Config
 
     esp_err_t NetworkConfig::SetGatewayAddress(const std::string &address)
     {
+        esp_ip4_addr_t tmp;
+        esp_err_t err = esp_netif_str_to_ip4(address.c_str(), &tmp);
+        if (err != ESP_OK) return err;
         return NvsHelpers::SetString(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_IP_GTW, address);
     }
 
@@ -96,6 +118,9 @@ namespace Config
 
     esp_err_t NetworkConfig::SetMainDNSAddress(const std::string &address)
     {
+        esp_ip4_addr_t tmp;
+        esp_err_t err = esp_netif_str_to_ip4(address.c_str(), &tmp);
+        if (err != ESP_OK) return err;
         return NvsHelpers::SetString(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_DNS_MAIN, address);
     }
 
@@ -108,6 +133,9 @@ namespace Config
 
     esp_err_t NetworkConfig::SetBackupDNSAddress(const std::string &address)
     {
+        esp_ip4_addr_t tmp;
+        esp_err_t err = esp_netif_str_to_ip4(address.c_str(), &tmp);
+        if (err != ESP_OK) return err;
         return NvsHelpers::SetString(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_DNS_BACKUP, address);
     }
 

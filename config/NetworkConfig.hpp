@@ -14,6 +14,9 @@ namespace Config
     {
     public:
 
+        /// @brief Delete all Network configuration (DHCP, static IP, DNS, NTP) in storage
+        static void DeleteNetworkConfig();
+
         /// @brief Get Hostname from configuration storage (useful for DHCP)
         /// @return hostname
         static const std::string GetHostname();
