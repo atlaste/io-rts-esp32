@@ -393,3 +393,33 @@ void register_io_cmdline_tools(iohome::IoHomeControl *io_home)
     register_iosetname();
     register_iolinkremote();
 }
+
+// ******************* REBOOT ********************
+
+static int do_reboot_cmd(int argc, char **argv)
+{
+    esp_restart();
+    return 0;
+}
+
+void register_reboot(void)
+{
+    const esp_console_cmd_t reboot_cmd = {
+        .command = "reboot",
+        .help = "Reboot ESP32",
+        .hint = NULL,
+        .func = &do_reboot_cmd,
+        .argtable = NULL,
+        .func_w_context = NULL,
+        .context = NULL
+    };
+
+    ESP_ERROR_CHECK( esp_console_cmd_register(&reboot_cmd) );
+}
+
+// ******************* Misc Register commands ********************
+
+void register_misc_cmdline_tools()
+{
+    register_reboot();
+}

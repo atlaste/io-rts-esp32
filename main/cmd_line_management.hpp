@@ -6,6 +6,9 @@
 extern "C" {
 #endif
 
+/// @brief Register misc. command line tools (like reboot)
+void register_misc_cmdline_tools();
+
 /// @brief Register command line tools
 /// @param io_home Pointer to IoHomeControl object
 void register_io_cmdline_tools(iohome::IoHomeControl *io_home);
