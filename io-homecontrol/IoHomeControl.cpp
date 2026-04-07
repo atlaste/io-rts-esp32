@@ -670,6 +670,7 @@ namespace iohome
       memset(&device, 0, sizeof(IoDevice));
       device.is_stopped = true;
       device.position = UNKNOWN_POSITION;
+      device.target = UNKNOWN_POSITION;
       HexStringToBuff(deviceID, device.info.node_id, NODE_ID_SIZE);
       sDeviceMap.insert({deviceID, device});
     }
@@ -1194,6 +1195,10 @@ namespace iohome
         deviceIt->second.last_status_timestamp = esp_timer_get_time();
         uint16_t tmpTargetPos = statusFrame.data[2] << 8 | statusFrame.data[3];
         uint16_t tmpCurrentPos = statusFrame.data[4] << 8 | statusFrame.data[5];
+        if (tmpTargetPos <= CMD_PARAM_STATUS_POS_MAX)
+          deviceIt->second.target = tmpTargetPos * 100.0 / CMD_PARAM_STATUS_POS_MAX;
+        else
+          deviceIt->second.target = UNKNOWN_POSITION; // No clue...
         if (tmpCurrentPos <= CMD_PARAM_STATUS_POS_MAX)
           deviceIt->second.position = tmpCurrentPos * 100.0 / CMD_PARAM_STATUS_POS_MAX;
         else
@@ -1203,7 +1208,7 @@ namespace iohome
           {
             // let's use target position (if valid) as we have reached it
             if (tmpTargetPos <= CMD_PARAM_STATUS_POS_MAX)
-              deviceIt->second.position = tmpTargetPos * 100.0 / CMD_PARAM_STATUS_POS_MAX;
+              deviceIt->second.position = deviceIt->second.target;
             else
               deviceIt->second.position = UNKNOWN_POSITION; // No clue...
           }
@@ -1247,6 +1252,10 @@ namespace iohome
         deviceIt->second.last_status_timestamp = esp_timer_get_time();
         uint16_t tmpTargetPos = statusFrame.data[5] << 8 | statusFrame.data[6];
         uint16_t tmpCurrentPos = statusFrame.data[7] << 8 | statusFrame.data[8];
+        if (tmpTargetPos <= CMD_PARAM_STATUS_POS_MAX)
+          deviceIt->second.target = tmpTargetPos * 100.0 / CMD_PARAM_STATUS_POS_MAX;
+        else
+          deviceIt->second.target = UNKNOWN_POSITION; // No clue...
         if (tmpCurrentPos <= CMD_PARAM_STATUS_POS_MAX)
           deviceIt->second.position = tmpCurrentPos * 100.0 / CMD_PARAM_STATUS_POS_MAX;
         else
@@ -1256,7 +1265,7 @@ namespace iohome
           {
             // let's use target position (if valid) as we have reached it
             if (tmpTargetPos <= CMD_PARAM_STATUS_POS_MAX)
-              deviceIt->second.position = tmpTargetPos * 100.0 / CMD_PARAM_STATUS_POS_MAX;
+              deviceIt->second.position = deviceIt->second.target;
             else
               deviceIt->second.position = UNKNOWN_POSITION; // No clue...
           }

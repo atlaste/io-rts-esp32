@@ -24,6 +24,7 @@ namespace iohome
     {
         IoDeviceInformation info;             // Device static information (no changes during use)
         float position;                       // Position between 0.0 and 100.0 or UNKNOWN_POSITION if unknown. 0 is open / 0% closed / light on / switch on, 100 is 100% closed / light off / switch off.
+        float target;
         bool is_stopped;                      // true if stopped, false if moving.
         int64_t last_status_timestamp;        // Timestamp of the last received status, in us (use esp_timer_get_time() to fill and compare to local date&time!)
         int64_t next_status_update_timestamp; // Timestamp of the next planned status update, in us (use esp_timer_get_time() to fill and compare to local date&time!)
