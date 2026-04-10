@@ -349,7 +349,7 @@ namespace iohome
         set_source(frame, own_node_id);
         uint8_t data[2] = {0x05, 0x00};
 
-        return set_command(frame, CMD_STATUS_UPDATE_RESPONSE, data, 8);
+        return set_command(frame, CMD_STATUS_UPDATE_RESPONSE, data, sizeof(data));
     }
 
     bool create_error_response(IoFrame &frame, const uint8_t *own_node_id, const uint8_t *dst_node_id, uint8_t error_code)
