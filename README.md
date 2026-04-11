@@ -10,7 +10,8 @@ This project is based on the wonderful work of:
 [cridp/iown-homecontrol-esp32sx1276](https://github.com/cridp/iown-homecontrol-esp32sx1276) especially for the SX1276 registers management part
 
 ### **Disclaimer**  
-This tool designed for educational and testing purposes, provided "as is", without warranty of any kind. Creators and contributors are not responsible for any misuse or damage caused by this tool. Keep in mind that it is forbidden in most countries to try to interact with IO-Homecontrol devices that are not yours and you may be sued for doing it.
+> [!CAUTION]
+> This tool designed for educational and testing purposes, provided "as is", without warranty of any kind. Creators and contributors are not responsible for any misuse or damage caused by thistool. Keep in mind that it is forbidden in most countries to try to interact with IO-Homecontrol devices that are not yours and you may be sued for doing it.
 
 _I don't give any support concerning the IO-Homecontrol 1W part. I give limited support depending on my free time._
 
@@ -47,10 +48,10 @@ These features are currently available:
     - Currently all devices based on position (shutter, blind, awning, window opener, garage opener, gate opener), ON/OFF switch, ON/OFF light and locks are expected to work.
     - In addition to devices, a button is added to reboot the ESP32 board.
 - Configuration storage to flash
+- Devices storage to flash (thanks [@kfroeschl](https://github.com/kfroeschl))
 
 These features should be available before end of 2026 depending on my available time:
 - Support SX1276 without DIO4 pin wired to ESP32 (expected April 2026 :calendar:)
-- Devices storage to flash (expected April 2026 :calendar:)
 - New features from command line (expected April 2026 :calendar:):
   - Change IO-Homecontrol configuration (enable/disable logging, active/passive mode, change IO key, change NodeID, change Tx power) without reflashing firmware
 - MQTT (expected April-May 2026 :calendar:):
