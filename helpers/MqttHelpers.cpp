@@ -20,6 +20,7 @@ static const std::string MQTT_CLIENT_POSITION_TOPIC = "/position";             /
 static const std::string MQTT_CLIENT_DISCOVERY_TOPIC = "/config";              // discovery topic
 static const std::string MQTT_CLIENT_BIRTH_WILL_TOPIC = "/status";             // birth and last will topic
 static const std::string MQTT_CLIENT_REBOOT_ID = "button_reboot";              // unique id and topic for "reboot" button
+static const std::string MQTT_CLIENT_DISCOVER_ID = "button_discover";          // unique id and topic for "Discover" button
 static const std::string MQTT_CLIENT_PREFIX_IO = "io_";                        // unique_id prefix for IO devices
 static const std::string MQTT_CLIENT_SUFFIX_FAV_IO = "_fav";                   // unique_id suffix for IO devices "favorite" button
 static const std::string MQTT_CLIENT_BIRTH_MSG = "online";                     // last will message
@@ -100,6 +101,11 @@ namespace Helpers
                     {
                         ESP_LOGI(TAG, "REBOOT requested from MQTT!");
                         mqttHelper->GetIoRtsManager()->Reboot();
+                    }
+                    else if (entity_id.compare(MQTT_CLIENT_DISCOVER_ID) == 0)
+                    {
+                        ESP_LOGI(TAG, "DISCOVER requested from MQTT!");
+                        mqttHelper->GetIoRtsManager()->mIoHome->DiscoverAndPairDevice();
                     }
                     else if (entity_id.starts_with(MQTT_CLIENT_PREFIX_IO))
                     {
@@ -316,6 +322,18 @@ namespace Helpers
                 }
                 if (!mIsIoHomePassive) // // don't send IO devices if in passive mode
                 {
+                    // Add 'Discover' button
+                    cmp = cJSON_AddObjectToObject(cmps, "discover");
+                    if (cmp == NULL)
+                        error = true;
+                    else
+                    {
+                        error = error || (cJSON_AddStringToObject(cmp, "p", "button") == NULL);                                // platform
+                        error = error || (cJSON_AddStringToObject(cmp, "unique_id", MQTT_CLIENT_DISCOVER_ID.c_str()) == NULL); // unique_id
+                        error = error || (cJSON_AddStringToObject(cmp, "name", "Discover IO device") == NULL);                 // name
+                        std::string discover_topic = mTopicPrefix + "/" + MQTT_CLIENT_DISCOVER_ID + MQTT_CLIENT_COMMAND_TOPIC;
+                        error = error || (cJSON_AddStringToObject(cmp, "command_topic", discover_topic.c_str()) == NULL); // command_topic
+                    }
                     // Add IO devices
                     std::lock_guard<std::mutex> guard(mIoRtsManager->mIoDevicesMutex); // Take mutex! It will be released when quitting the scope (after for loop)
                     for (auto it = mIoRtsManager->mIoDevices.begin(); it != mIoRtsManager->mIoDevices.end(); ++it)
