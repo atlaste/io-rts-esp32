@@ -47,13 +47,13 @@ These features are currently available:
   - MQTT support:
     - Discovery message is published and compatible with Home Assistant, permitting to automatically add devices to it without extra configuration (only in active mode).
     - Currently all devices based on position (shutter, blind, awning, window opener, garage opener, gate opener), ON/OFF switch, ON/OFF light and locks are expected to work.
+    - A "Favorite position" button for devices based on position (shutter, blind, awning, window opener, garage opener, gate opener) is available.
     - In addition to devices, a button is added to reboot the ESP32 board.
 - Configuration storage to flash
 - Devices storage to flash (thanks [@kfroeschl](https://github.com/kfroeschl))
 
 These features should be available before end of 2026 depending on my available time:
 - MQTT (expected April-May 2026 :calendar:):
-  - Add "Favorite position" button for devices based on position (shutter, blind, awning, window opener, garage opener, gate opener)
   - Discover / add / delete device
   - Link remote to device / delete remote
   - Configuration from MQTT (in addition to command line capability)

@@ -13,13 +13,15 @@ using namespace iohome;
 static const std::string MQTT_CERTIFICATE_BEGIN = "-----BEGIN CERTIFICATE-----\n";
 static const std::string MQTT_CERTIFICATE_END = "\n-----END CERTIFICATE-----";
 static const std::string MQTT_CLIENT_COMMAND_TOPIC = "/set";                   // command topic
-static const std::string MQTT_CLIENT_COMMAND_POSITION_TOPIC = "/set_position"; // command topic
+static const std::string MQTT_CLIENT_COMMAND_POSITION_TOPIC = "/set_position"; // position topic
+static const std::string MQTT_CLIENT_COMMAND_FAV_POS_TOPIC = "/set_fav_pos";   // set favorite position topic
 static const std::string MQTT_CLIENT_STATE_TOPIC = "/state";                   // state topic
 static const std::string MQTT_CLIENT_POSITION_TOPIC = "/position";             // position topic
 static const std::string MQTT_CLIENT_DISCOVERY_TOPIC = "/config";              // discovery topic
 static const std::string MQTT_CLIENT_BIRTH_WILL_TOPIC = "/status";             // birth and last will topic
 static const std::string MQTT_CLIENT_REBOOT_ID = "button_reboot";              // unique id and topic for "reboot" button
 static const std::string MQTT_CLIENT_PREFIX_IO = "io_";                        // unique_id prefix for IO devices
+static const std::string MQTT_CLIENT_SUFFIX_FAV_IO = "_fav";                   // unique_id suffix for IO devices "favorite" button
 static const std::string MQTT_CLIENT_BIRTH_MSG = "online";                     // last will message
 static const std::string MQTT_CLIENT_WILL_MSG = "offline";                     // last will message
 
@@ -56,6 +58,8 @@ namespace Helpers
             msg_id = esp_mqtt_client_subscribe(client, topic.c_str(), 0);
             topic = mqttHelper->GetTopicPrefix() + "/+" + MQTT_CLIENT_COMMAND_POSITION_TOPIC;
             msg_id = esp_mqtt_client_subscribe(client, topic.c_str(), 0);
+            topic = mqttHelper->GetTopicPrefix() + "/+" + MQTT_CLIENT_COMMAND_FAV_POS_TOPIC;
+            msg_id = esp_mqtt_client_subscribe(client, topic.c_str(), 0);
             break;
         }
         case MQTT_EVENT_DISCONNECTED:
@@ -79,13 +83,16 @@ namespace Helpers
             // Parse command and do the job!
             // Is it a command for us?
             const std::string topic_str(event->topic, event->topic_len);
-            if (topic_str.starts_with(mqttHelper->GetTopicPrefix()) && (topic_str.ends_with(MQTT_CLIENT_COMMAND_TOPIC) || topic_str.ends_with(MQTT_CLIENT_COMMAND_POSITION_TOPIC)))
+            if (topic_str.starts_with(mqttHelper->GetTopicPrefix()) &&
+                (topic_str.ends_with(MQTT_CLIENT_COMMAND_TOPIC) || topic_str.ends_with(MQTT_CLIENT_COMMAND_POSITION_TOPIC) || topic_str.ends_with(MQTT_CLIENT_COMMAND_FAV_POS_TOPIC)))
             {
-                size_t id_len;
+                size_t id_len = 0;
                 if (topic_str.ends_with(MQTT_CLIENT_COMMAND_TOPIC))
                     id_len = topic_str.length() - mqttHelper->GetTopicPrefix().length() - MQTT_CLIENT_COMMAND_TOPIC.length() - 1;
-                else
+                else if (topic_str.ends_with(MQTT_CLIENT_COMMAND_POSITION_TOPIC))
                     id_len = topic_str.length() - mqttHelper->GetTopicPrefix().length() - MQTT_CLIENT_COMMAND_POSITION_TOPIC.length() - 1;
+                else if (topic_str.ends_with(MQTT_CLIENT_COMMAND_FAV_POS_TOPIC))
+                    id_len = topic_str.length() - mqttHelper->GetTopicPrefix().length() - MQTT_CLIENT_COMMAND_FAV_POS_TOPIC.length() - 1;
                 if (id_len > 0)
                 {
                     std::string entity_id = topic_str.substr(mqttHelper->GetTopicPrefix().length() + 1, id_len);
@@ -105,33 +112,36 @@ namespace Helpers
                         if (deviceID.length() == NODE_ID_SIZE * 2)
                         {
                             // ESP_LOGI(TAG, "Received command %s for device %s", command.c_str(), deviceID.c_str());
-                            if (command.compare("CLOSE") == 0)
+                            if (topic_str.ends_with(MQTT_CLIENT_COMMAND_TOPIC))
                             {
-                                mqttHelper->GetIoRtsManager()->mIoHome->CloseDevice(deviceID);
-                            }
-                            else if (command.compare("OPEN") == 0)
-                            {
-                                mqttHelper->GetIoRtsManager()->mIoHome->OpenDevice(deviceID);
-                            }
-                            else if (command.compare("STOP") == 0)
-                            {
-                                mqttHelper->GetIoRtsManager()->mIoHome->StopDevice(deviceID);
-                            }
-                            else if (command.compare("ON") == 0)
-                            {
-                                mqttHelper->GetIoRtsManager()->mIoHome->SetDevicePosition(deviceID, SWITCH_LIGHT_ON_POSITION);
-                            }
-                            else if (command.compare("OFF") == 0)
-                            {
-                                mqttHelper->GetIoRtsManager()->mIoHome->SetDevicePosition(deviceID, SWITCH_LIGHT_OFF_POSITION);
-                            }
-                            else if (command.compare("LOCK") == 0)
-                            {
-                                mqttHelper->GetIoRtsManager()->mIoHome->SetDevicePosition(deviceID, SWITCH_LIGHT_OFF_POSITION); // not sure, wait for feedback
-                            }
-                            else if (command.compare("UNLOCK") == 0)
-                            {
-                                mqttHelper->GetIoRtsManager()->mIoHome->SetDevicePosition(deviceID, SWITCH_LIGHT_ON_POSITION); // not sure, wait for feedback
+                                if (command.compare("CLOSE") == 0)
+                                {
+                                    mqttHelper->GetIoRtsManager()->mIoHome->CloseDevice(deviceID);
+                                }
+                                else if (command.compare("OPEN") == 0)
+                                {
+                                    mqttHelper->GetIoRtsManager()->mIoHome->OpenDevice(deviceID);
+                                }
+                                else if (command.compare("STOP") == 0)
+                                {
+                                    mqttHelper->GetIoRtsManager()->mIoHome->StopDevice(deviceID);
+                                }
+                                else if (command.compare("ON") == 0)
+                                {
+                                    mqttHelper->GetIoRtsManager()->mIoHome->SetDevicePosition(deviceID, SWITCH_LIGHT_ON_POSITION);
+                                }
+                                else if (command.compare("OFF") == 0)
+                                {
+                                    mqttHelper->GetIoRtsManager()->mIoHome->SetDevicePosition(deviceID, SWITCH_LIGHT_OFF_POSITION);
+                                }
+                                else if (command.compare("LOCK") == 0)
+                                {
+                                    mqttHelper->GetIoRtsManager()->mIoHome->SetDevicePosition(deviceID, SWITCH_LIGHT_OFF_POSITION); // not sure, wait for feedback
+                                }
+                                else if (command.compare("UNLOCK") == 0)
+                                {
+                                    mqttHelper->GetIoRtsManager()->mIoHome->SetDevicePosition(deviceID, SWITCH_LIGHT_ON_POSITION); // not sure, wait for feedback
+                                }
                             }
                             else if (topic_str.ends_with(MQTT_CLIENT_COMMAND_POSITION_TOPIC)) // it should be a position between 0 and 100
                             {
@@ -142,6 +152,11 @@ namespace Helpers
                                 }
                                 else
                                     ESP_LOGE(TAG, "Received command %s for device %s -> invalid position!", command.c_str(), deviceID.c_str());
+                            }
+                            else if (topic_str.ends_with(MQTT_CLIENT_COMMAND_FAV_POS_TOPIC)) // favorite position button pressed
+                            {
+                                // ESP_LOGI(TAG, "Received 'set favorite position' for device %s", deviceID.c_str());
+                                mqttHelper->GetIoRtsManager()->mIoHome->SetDeviceToFavoritePosition(deviceID);
                             }
                             else
                             {
@@ -307,10 +322,12 @@ namespace Helpers
                     {
                         // Add this device to JSON
                         std::string device_id = MQTT_CLIENT_PREFIX_IO + it->first;
+                        std::string device_id_fav = MQTT_CLIENT_PREFIX_IO + it->first + MQTT_CLIENT_SUFFIX_FAV_IO;
                         std::string device_cmd_topic = GetTopicPrefix() + "/" + device_id + MQTT_CLIENT_COMMAND_TOPIC;
                         std::string device_state_topic = GetTopicPrefix() + "/" + device_id + MQTT_CLIENT_STATE_TOPIC;
                         std::string device_position_topic = GetTopicPrefix() + "/" + device_id + MQTT_CLIENT_POSITION_TOPIC;
                         std::string device_cmd_position_topic = GetTopicPrefix() + "/" + device_id + MQTT_CLIENT_COMMAND_POSITION_TOPIC;
+                        std::string device_cmd_fav_pos_topic = GetTopicPrefix() + "/" + device_id + MQTT_CLIENT_COMMAND_FAV_POS_TOPIC;
                         std::string device_plateform;
                         cmp = cJSON_AddObjectToObject(cmps, device_id.c_str());
                         if (cmp == NULL)
@@ -382,11 +399,35 @@ namespace Helpers
                                         break;
                                     }
                                     error = error || (cJSON_AddStringToObject(cmp, "device_class", type.c_str()) == NULL); // device_class
-                                    // TODO: add "favorite position" button
+                                    if (!error)
+                                    {
+                                        // add "favorite position" button
+                                        cJSON *fav = cJSON_AddObjectToObject(cmps, device_id_fav.c_str());
+                                        if (fav == NULL)
+                                            error = true;
+                                        else
+                                        {
+                                            error = error || (cJSON_AddStringToObject(fav, "p", "button") == NULL);                      // platform
+                                            error = error || (cJSON_AddStringToObject(fav, "unique_id", device_id_fav.c_str()) == NULL); // unique_id
+                                            std::string favName = it->second.info.name + std::string(" Favorite position");
+                                            error = error || (cJSON_AddStringToObject(fav, "name", favName.c_str()) == NULL);                           // name
+                                            error = error || (cJSON_AddStringToObject(fav, "command_topic", device_cmd_fav_pos_topic.c_str()) == NULL); // command_topic
+                                        }
+                                    }
                                 }
                                 else
                                 {
-                                    // TODO: remove "favorite position" button
+                                    if (!error)
+                                    {
+                                        // remove "favorite position" button
+                                        cJSON *fav = cJSON_AddObjectToObject(cmps, device_id_fav.c_str());
+                                        if (fav == NULL)
+                                            error = true;
+                                        else
+                                        {
+                                            error = error || (cJSON_AddStringToObject(fav, "p", "button") == NULL); // platform
+                                        }
+                                    }
                                 }
                                 break;
                             }
