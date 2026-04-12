@@ -1,6 +1,7 @@
 #include "IoRtsManager.hpp"
 #include "HardwareConfig.hpp"
 #include "MqttConfig.hpp"
+#include "IoHomeConfig.hpp"
 #include "DeviceStorage.hpp"
 
 #include "esp_log.h"
@@ -16,7 +17,6 @@ namespace IoRts
     static IoRtsManager *sIoRtsManager; // Pointer to IoRtsManager isntance
     static MqttHelpers *sMqttHelper;    // Pointer to MQTT instance to manage MQTT communication layer
 
-#ifdef CONFIG_ENABLE_IOHOMECONTROL
     static void loggerCallback(esp_log_level_t log_level, const char *tag, std::string log)
     {
         switch (log_level)
@@ -111,7 +111,6 @@ namespace IoRts
             }
         }
     }
-#endif // ENABLE_IOHOMECONTROL
 
     IoRtsManager::IoRtsManager()
     {
@@ -201,7 +200,6 @@ namespace IoRts
     }
     void IoRtsManager::LoadIoDevicesFromStorage()
     {
-#ifdef CONFIG_ENABLE_IOHOMECONTROL
         if (mIoHome == nullptr)
             return;
 
@@ -229,22 +227,10 @@ namespace IoRts
             ESP_LOGI(TAG, "Restored device %s (%s) with %u remote(s)",
                      deviceID.c_str(), storedDevice.device.info.name, storedDevice.linked_remotes.size());
         }
-#endif // ENABLE_IOHOMECONTROL
     }
     void IoRtsManager::InitializeIo()
     {
-// Initialize IO-HOMECONTROL
-#ifdef CONFIG_ENABLE_IOHOMECONTROL
-#ifdef CONFIG_IOHOMECONTROL_LOGGING_ENABLED
-        bool logging = true;
-#else
-        bool logging = false;
-#endif
-#ifdef CONFIG_IOHOMECONTROL_PASSIVE_MODE
-        mIoPassive = true;
-#else
-        mIoPassive = false;
-#endif
+        // Initialize IO-HOMECONTROL
         mSX1276Radio = new RadioLinks::RadioSX1276(Config::GetSX1276SpiHost(),
                                                    CONFIG_IOHOMECONTROL_SX1276_SPI_CS, CONFIG_IOHOMECONTROL_SX1276_RST,
                                                    CONFIG_IOHOMECONTROL_SX1276_DIO0, CONFIG_IOHOMECONTROL_SX1276_DIO4);
@@ -253,12 +239,11 @@ namespace IoRts
             mIoHome = new iohome::IoHomeControl(mSX1276Radio, loggerCallback, deviceStatusCallback);
             if (mIoHome != nullptr)
             {
-                mIoHome->SetVerbose(logging);
-                mIoHome->Begin(CONFIG_IOHOMECONTROL_DEFAULT_NODEID, CONFIG_IOHOMECONTROL_DEFAULT_KEY, mIoPassive);
-                mIoHome->ConfigureRadio(CONFIG_IOHOMECONTROL_DEFAULT_TX_POWER);
+                mIoHome->SetVerbose(IoHomeConfig::isLoggingEnabled());
+                mIoHome->Begin(IoHomeConfig::GetIoNodeId(), IoHomeConfig::GetIoSystemKey(), IoHomeConfig::isPassiveModeEnabled());
+                mIoHome->ConfigureRadio(IoHomeConfig::GetTxPower());
             }
         }
-#endif // ENABLE_IOHOMECONTROL
     }
     void IoRtsManager::InitializeMqtt()
     {

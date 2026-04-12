@@ -2,10 +2,6 @@ menu "IO RTS Project Configuration"
 
     orsource "$IDF_PATH/examples/common_components/env_caps/$IDF_TARGET/Kconfig.env_caps"
 
-    config ENABLE_IOHOMECONTROL
-        bool "Enable IO-Homecontrol"
-        default y
-
     choice CONNECTIVITY_CHOOSE_LAYER
         prompt "Choose between Wifi and Ethernet"
         default CONNECTIVITY_CHOICE_WIFI
@@ -185,7 +181,6 @@ menu "IO RTS Project Configuration"
     endmenu
 
     menu "IO Configuration"
-        depends on ENABLE_IOHOMECONTROL
 
         config IOHOMECONTROL_LOGGING_ENABLED
             bool "Enable logging in IO-HomeControl layer"

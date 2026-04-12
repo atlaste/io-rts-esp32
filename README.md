@@ -43,6 +43,7 @@ These features are currently available:
     - Change Wifi configuration without reflashing firmware (configuration applied after reboot)
     - Change DHCP/IPv4 configuration without reflashing firmware (configuration applied after reboot)
     - Change MQTT configuration without reflashing firmware (configuration applied after reboot)
+    - Change IO-Homecontrol configuration without reflashing firmware (configuration applied after reboot)
   - MQTT support:
     - Discovery message is published and compatible with Home Assistant, permitting to automatically add devices to it without extra configuration (only in active mode).
     - Currently all devices based on position (shutter, blind, awning, window opener, garage opener, gate opener), ON/OFF switch, ON/OFF light and locks are expected to work.
@@ -51,8 +52,6 @@ These features are currently available:
 - Devices storage to flash (thanks [@kfroeschl](https://github.com/kfroeschl))
 
 These features should be available before end of 2026 depending on my available time:
-- New features from command line (expected April 2026 :calendar:):
-  - Change IO-Homecontrol configuration (enable/disable logging, active/passive mode, change IO key, change NodeID, change Tx power) without reflashing firmware
 - MQTT (expected April-May 2026 :calendar:):
   - Add "Favorite position" button for devices based on position (shutter, blind, awning, window opener, garage opener, gate opener)
   - Discover / add / delete device

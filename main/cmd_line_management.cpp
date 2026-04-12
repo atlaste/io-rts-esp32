@@ -1,6 +1,7 @@
 #include "cmd_line_management.hpp"
 #include "NetworkConfig.hpp"
 #include "MqttConfig.hpp"
+#include "IoHomeConfig.hpp"
 
 #include <stdio.h>
 #include <string.h>
@@ -483,6 +484,155 @@ void register_ioremoveremote(void)
     ESP_ERROR_CHECK(esp_console_cmd_register(&ioremoveremote_cmd));
 }
 
+// ******************* IO CONFIG ********************
+
+/// @brief Structure used by the 'io_config' command
+static struct
+{
+    struct arg_lit *read;
+    struct arg_lit *del;
+    struct arg_int *logging_state;
+    struct arg_int *passive_state;
+    struct arg_str *io_system_key;
+    struct arg_str *node_id;
+    struct arg_int *tx_power;
+    struct arg_end *end;
+} ioconfig_args;
+
+static int do_ioconfig_cmd(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&ioconfig_args);
+    if (nerrors != 0)
+    {
+        arg_print_errors(stderr, ioconfig_args.end, argv[0]);
+        return 1;
+    }
+    if (ioconfig_args.read->count > 0)
+    {
+        // Read IO layer configuration
+        ESP_LOGI(TAG, "Logging status: %s", IoHomeConfig::isLoggingEnabled() ? "enabled" : "disabled");
+        ESP_LOGI(TAG, "Passive mode: %s", IoHomeConfig::isPassiveModeEnabled() ? "enabled" : "disabled");
+        ESP_LOGI(TAG, "System key: %s", IoHomeConfig::GetIoSystemKey().c_str());
+        ESP_LOGI(TAG, "Our node ID: %s", IoHomeConfig::GetIoNodeId().c_str());
+        ESP_LOGI(TAG, "Tx power: %d", IoHomeConfig::GetTxPower());
+    }
+    else if (ioconfig_args.del->count > 0)
+    {
+        IoHomeConfig::DeleteIoHomeConfig();
+        ESP_LOGI(TAG, "IO Home configuration restored to default values");
+    }
+    else
+    {
+        esp_err_t err;
+        // Set configuration
+        if (ioconfig_args.logging_state->count > 0)
+        {
+            err = IoHomeConfig::ActivateLogging(ioconfig_args.logging_state->ival[0] != 0);
+            if (err != ESP_OK)
+            {
+                ESP_LOGE(TAG, "Failed to set logging state to configuration storage! (%d)", err);
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Logging state set to configuration storage: %s", IoHomeConfig::isLoggingEnabled() ? "enabled" : "disabled");
+            }
+        }
+        if (ioconfig_args.passive_state->count > 0)
+        {
+            err = IoHomeConfig::ActivatePassiveMode(ioconfig_args.passive_state->ival[0] != 0);
+            if (err != ESP_OK)
+            {
+                ESP_LOGE(TAG, "Failed to set passive mode to configuration storage! (%d)", err);
+            }
+            else
+            {
+                ESP_LOGI(TAG, "Passive mode set to configuration storage: %s", IoHomeConfig::isPassiveModeEnabled() ? "enabled" : "disabled");
+            }
+        }
+        if (ioconfig_args.io_system_key->count > 0)
+        {
+            if (strlen(ioconfig_args.io_system_key->sval[0]) != 32)
+            {
+                ESP_LOGE(TAG, "Invalid value for system key, must be representation of 16 bytes! (provided %s)", ioconfig_args.io_system_key->sval[0]);
+            }
+            else
+            {
+                err = IoHomeConfig::SetIoSystemKey(ioconfig_args.io_system_key->sval[0]);
+                if (err != ESP_OK)
+                {
+                    ESP_LOGE(TAG, "Failed to set system key to configuration storage! (%d)", err);
+                }
+                else
+                {
+                    ESP_LOGI(TAG, "System key set to configuration storage: %s", IoHomeConfig::GetIoSystemKey().c_str());
+                }
+            }
+        }
+        if (ioconfig_args.node_id->count > 0)
+        {
+            if (strlen(ioconfig_args.node_id->sval[0]) != 6)
+            {
+                ESP_LOGE(TAG, "Invalid value for node ID, must be representation of 3 bytes! (provided %s)", ioconfig_args.node_id->sval[0]);
+            }
+            else
+            {
+                err = IoHomeConfig::SetIoNodeId(ioconfig_args.node_id->sval[0]);
+                if (err != ESP_OK)
+                {
+                    ESP_LOGE(TAG, "Failed to set node ID to configuration storage! (%d)", err);
+                }
+                else
+                {
+                    ESP_LOGI(TAG, "Node ID set to configuration storage: %s", IoHomeConfig::GetIoNodeId().c_str());
+                }
+            }
+        }
+        if (ioconfig_args.tx_power->count > 0)
+        {
+            if (ioconfig_args.tx_power->ival[0] < 0 || ioconfig_args.tx_power->ival[0] > 20)
+            {
+                ESP_LOGE(TAG, "Invalid value for Tx power, must be between 0 and 20! (provided %d)", ioconfig_args.tx_power->ival[0]);
+            }
+            else
+            {
+                err = IoHomeConfig::SetTxPower(ioconfig_args.tx_power->ival[0]);
+                if (err != ESP_OK)
+                {
+                    ESP_LOGE(TAG, "Failed to set Tx power to configuration storage! (%d)", err);
+                }
+                else
+                {
+                    ESP_LOGI(TAG, "Tx power set to configuration storage: %d", IoHomeConfig::GetTxPower());
+                }
+            }
+        }
+    }
+    return 0;
+}
+
+void register_ioconfig(void)
+{
+    ioconfig_args.read = arg_lit0("r", "read", "Read current configuration from storage (no other argument required)");
+    ioconfig_args.del = arg_lit0("d", "delete", "Delete current configuration in storage (no other argument required)");
+    ioconfig_args.logging_state = arg_int0(NULL, "logging", "<state>", "1 to enable logging in IO HomeControl layer, 0 to disable");
+    ioconfig_args.passive_state = arg_int0(NULL, "passive", "<state>", "1 to enable passive state in IO HomeControl layer, 0 to disable");
+    ioconfig_args.io_system_key = arg_str0(NULL, "key", "<system key>", "IO System key (string representation of 16 bytes)");
+    ioconfig_args.node_id = arg_str0(NULL, "id", "<node ID>", "Board Node ID (string representation of 3 bytes, eg 112233)");
+    ioconfig_args.tx_power = arg_int0(NULL, "power", "<power>", "Tx power (range 0-20)");
+    ioconfig_args.end = arg_end(7);
+
+    const esp_console_cmd_t ioconfig_cmd = {
+        .command = "io_config",
+        .help = "Configure IO layer",
+        .hint = NULL,
+        .func = &do_ioconfig_cmd,
+        .argtable = &ioconfig_args,
+        .func_w_context = NULL,
+        .context = NULL};
+
+    ESP_ERROR_CHECK(esp_console_cmd_register(&ioconfig_cmd));
+}
+
 // ******************* IO Register commands ********************
 
 void register_io_cmdline_tools(IoRts::IoRtsManager *io_rts_manager)
@@ -501,6 +651,7 @@ void register_io_cmdline_tools(IoRts::IoRtsManager *io_rts_manager)
     register_iosetname();
     register_iolinkremote();
     register_ioremoveremote();
+    register_ioconfig();
 }
 
 // ******************* REBOOT ********************

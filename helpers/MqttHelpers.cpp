@@ -1,5 +1,6 @@
 #include "MqttHelpers.hpp"
 #include "MqttConfig.hpp"
+#include "IoHomeConfig.hpp"
 
 #include "cJSON.h"
 
@@ -95,9 +96,9 @@ namespace Helpers
                     }
                     else if (entity_id.starts_with(MQTT_CLIENT_PREFIX_IO))
                     {
-#ifdef CONFIG_IOHOMECONTROL_PASSIVE_MODE
-                        break;
-#endif
+                        if (mqttHelper->isIoHomePassive())
+                            break; // don't process IO devices commands if in passive mode
+
                         // Parse and execute command on targeted IO device
                         const std::string deviceID = entity_id.substr(MQTT_CLIENT_PREFIX_IO.length());
                         const std::string command(event->data, event->data_len);
@@ -181,6 +182,7 @@ namespace Helpers
     MqttHelpers::MqttHelpers(IoRts::IoRtsManager *manager)
         : mIoRtsManager(manager), mStarted(false)
     {
+        mIsIoHomePassive = IoHomeConfig::isPassiveModeEnabled();
         mTopicPrefix = MqttConfig::GetTopicPrefix();
         mDiscoveryPrefix = MqttConfig::GetDiscoveryPrefix();
     }
@@ -239,11 +241,6 @@ namespace Helpers
     void MqttHelpers::SendDiscovery()
     {
         // See https://www.home-assistant.io/integrations/mqtt/#mqtt-discovery
-#ifdef CONFIG_IOHOMECONTROL_PASSIVE_MODE
-        bool passive = true;
-#else
-        bool passive = false;
-#endif
         bool error = false;
         cJSON *discovery = NULL;
         cJSON *dev = NULL;
@@ -302,7 +299,7 @@ namespace Helpers
                     std::string reboot_topic = mTopicPrefix + "/" + MQTT_CLIENT_REBOOT_ID + MQTT_CLIENT_COMMAND_TOPIC;
                     error = error || (cJSON_AddStringToObject(cmp, "command_topic", reboot_topic.c_str()) == NULL); // command_topic
                 }
-                if (!passive)
+                if (!mIsIoHomePassive) // // don't send IO devices if in passive mode
                 {
                     // Add IO devices
                     std::lock_guard<std::mutex> guard(mIoRtsManager->mIoDevicesMutex); // Take mutex! It will be released when quitting the scope (after for loop)
@@ -467,9 +464,9 @@ namespace Helpers
     }
     void MqttHelpers::SendIoDeviceStatus(const std::string &deviceId)
     {
-#ifdef CONFIG_IOHOMECONTROL_PASSIVE_MODE
-        return;
-#endif
+        if (mIsIoHomePassive)
+            return; // don't send status if in passive mode
+
         std::lock_guard<std::mutex> guard(mIoRtsManager->mIoDevicesMutex); // Take mutex! It will be released when quitting the scope (after for loop)
         // send device status
         if (mIoRtsManager != nullptr && mIoRtsManager->mIoDevices.contains(deviceId))

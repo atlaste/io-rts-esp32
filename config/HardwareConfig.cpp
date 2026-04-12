@@ -85,7 +85,6 @@ namespace Config
         return err;
     }
 
-#ifdef CONFIG_ENABLE_IOHOMECONTROL
     spi_host_device_t GetSX1276SpiHost()
     {
 #ifdef CONFIG_IOHOMECONTROL_SX1276_SPI_HOST3
@@ -94,7 +93,6 @@ namespace Config
     return SPI2_HOST;
 #endif
     }
-#endif
 
 #ifdef CONFIG_CONNECTIVITY_CHOICE_ETH
     spi_host_device_t GetEthernetSpiHost()

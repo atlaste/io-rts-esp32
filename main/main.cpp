@@ -43,10 +43,7 @@ extern "C" void app_main(void)
     esp_console_dev_usb_serial_jtag_config_t usbjtag_config = ESP_CONSOLE_DEV_USB_SERIAL_JTAG_CONFIG_DEFAULT();
     ESP_ERROR_CHECK(esp_console_new_repl_usb_serial_jtag(&usbjtag_config, &repl_config, &repl));
 #endif
-#ifdef CONFIG_ENABLE_IOHOMECONTROL
     register_io_cmdline_tools(&ioRtsManager);
-#endif
-
     register_misc_cmdline_tools();
     register_network_config_cmdline_tools();
     register_mqtt_config_cmdline_tools();
