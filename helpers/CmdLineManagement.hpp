@@ -7,6 +7,9 @@ extern "C"
 {
 #endif
 
+    /// @brief Initialize command line tools
+    void init_cmdline_tools(IoRts::IoRtsManager *io_rts_manager);
+
     /// @brief Register misc. command line tools (like reboot)
     void register_misc_cmdline_tools();
 
