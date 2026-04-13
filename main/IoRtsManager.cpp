@@ -9,6 +9,8 @@
 
 static const char *TAG = "ioRtsMan";
 
+#include <format>
+
 using namespace Helpers;
 using namespace Config;
 
@@ -19,17 +21,22 @@ namespace IoRts
 
     static void loggerCallback(esp_log_level_t log_level, const char *tag, std::string log)
     {
+        char level;
         switch (log_level)
         {
         case ESP_LOG_ERROR:
             ESP_LOGE(tag, "%s", log.c_str());
+            level = 'E';
             break;
         case ESP_LOG_INFO:
             ESP_LOGI(tag, "%s", log.c_str());
+            level = 'I';
             break;
         default:
+            level = '?';
             break;
         }
+        if (sMqttHelper != nullptr) sMqttHelper->SendLog(std::format("{} {}: {}", level, tag, log));
     }
 
     static void deviceStatusCallback(const std::string deviceID, const iohome::IoDevice &device)

@@ -43,6 +43,8 @@ static const std::string MQTT_CLIENT_BIRTH_WILL_TOPIC = "/status"; // birth and 
 static const std::string MQTT_CLIENT_BIRTH_MSG = "online";         // last will message - birth
 static const std::string MQTT_CLIENT_WILL_MSG = "offline";         // last will message - death
 
+static const std::string MQTT_CLIENT_LOG_TOPIC = "/log"; // log topic
+
 static const char *TAG = "MQTTHelper";
 
 namespace Helpers
@@ -950,5 +952,10 @@ namespace Helpers
             }
         }
         // Mutex automatically released!
+    }
+    void MqttHelpers::SendLog(const std::string &log)
+    {
+        std::string topic = mTopicPrefix + MQTT_CLIENT_LOG_TOPIC;
+        esp_mqtt_client_publish(mMqttClientHandle, topic.c_str(), log.c_str(), 0, 0, 0);
     }
 }

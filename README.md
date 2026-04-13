@@ -45,6 +45,7 @@ These features are currently available:
     - Change MQTT configuration without reflashing firmware (configuration applied after reboot)
     - Change IO-Homecontrol configuration without reflashing firmware (configuration applied after reboot)
   - MQTT support:
+    - If IO logging and MQTT are both enabled, IO layer messages are sent to MQTT_TOPIC_PREFIX/log
     - Discovery message is published and compatible with Home Assistant, permitting to automatically add devices to it without extra configuration (only in active mode).
     - Currently all devices based on position (shutter, blind, awning, window opener, garage opener, gate opener), ON/OFF switch, ON/OFF light and locks are expected to work.
     - A "Favorite position" button for devices based on position (shutter, blind, awning, window opener, garage opener, gate opener) is available.

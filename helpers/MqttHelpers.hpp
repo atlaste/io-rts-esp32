@@ -42,6 +42,10 @@ namespace Helpers
         /// @return true if IO Home is in passive mode
         bool isIoHomePassive() { return mIsIoHomePassive; }
 
+        /// @brief Send log message to MQTT topic
+        /// @param log log message to send
+        void SendLog(const std::string &log);
+
     private:
         IoRts::IoRtsManager *mIoRtsManager;         // Pointer to IoRtsManager object
         bool mStarted;                              // true if client is started
