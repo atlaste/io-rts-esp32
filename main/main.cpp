@@ -16,7 +16,7 @@ using namespace Helpers;
 
 extern "C" void app_main(void)
 {
-    // Initialize Hardware: NVS, GPIO ISR, SPI bus
+    // Initialize Hardware: NVS, LittleFS, GPIO ISR, SPI bus
     esp_err_t err = Config::InitHardware();
     ESP_ERROR_CHECK(err);
 

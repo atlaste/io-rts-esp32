@@ -1,5 +1,6 @@
 #include "HardwareConfig.hpp"
 #include "NvsHelpers.hpp"
+#include "DeviceStorage.hpp"
 
 #include "sdkconfig.h"
 #include "driver/gpio.h"
@@ -52,6 +53,14 @@ namespace Config
         if (err != ESP_OK)
         {
             ESP_LOGE(TAG, "Failed to initialize NVS");
+            return err;
+        }
+
+        // Initialize LittleFS for devices storage
+        err = Helpers::DeviceStorage::Init();
+        if (err != ESP_OK)
+        {
+            ESP_LOGE(TAG, "Failed to initialize device storage (%s)", esp_err_to_name(err));
             return err;
         }
 

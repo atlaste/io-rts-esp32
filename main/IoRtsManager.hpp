@@ -46,9 +46,6 @@ namespace IoRts
     private:
         bool mIoPassive = false; // current configuration, initialized at boot
 
-        /// @brief Initialize device storage (mount LittleFS partition)
-        void InitializeStorage();
-
         /// @brief Load devices and remotes from flash storage, register them in IoHomeControl
         void LoadIoDevicesFromStorage();
 

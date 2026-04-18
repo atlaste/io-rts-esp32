@@ -5,7 +5,7 @@
 
 namespace Config
 {
-    /// @brief Initialize hardware depending on config: NVS, GPIO ISR, SPI bus
+    /// @brief Initialize hardware depending on config: NVS, LittleFS, GPIO ISR, SPI bus
     /// @return ESP_OK if no error
     esp_err_t InitHardware();
 

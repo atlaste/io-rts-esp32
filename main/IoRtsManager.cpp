@@ -122,8 +122,6 @@ namespace IoRts
     IoRtsManager::IoRtsManager()
     {
         sIoRtsManager = this;
-        // Initialize device storage (mount LittleFS)
-        InitializeStorage();
         // Initialize IO objects
         InitializeIo();
         // Load devices from flash storage
@@ -196,14 +194,6 @@ namespace IoRts
             mIoHome->DeleteRemote(remoteID);
         // Remove from storage
         Helpers::DeviceStorage::RemoveRemoteFromIoDevices(remoteID);
-    }
-    void IoRtsManager::InitializeStorage()
-    {
-        esp_err_t err = Helpers::DeviceStorage::Init();
-        if (err != ESP_OK)
-        {
-            ESP_LOGE(TAG, "Failed to initialize device storage (%s)", esp_err_to_name(err));
-        }
     }
     void IoRtsManager::LoadIoDevicesFromStorage()
     {
