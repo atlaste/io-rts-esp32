@@ -156,7 +156,10 @@ namespace RadioLinks
         ESP_LOGI(TAG, "Init...");
         // initialize GPIO for DIO0/DIO4/MISO/RST...
         pinMode(mIoDIO0, GPIO_MODE_INPUT, GPIO_PULLUP_ENABLE, GPIO_PULLDOWN_DISABLE);
-        pinMode(mIoDIO4, GPIO_MODE_INPUT, GPIO_PULLUP_ENABLE, GPIO_PULLDOWN_DISABLE);
+        if (mIoDIO4 != GPIO_NUM_NC)
+        {
+            pinMode(mIoDIO4, GPIO_MODE_INPUT, GPIO_PULLUP_ENABLE, GPIO_PULLDOWN_DISABLE);
+        }
 
         // See §5.2.1. POR
         pinMode(mIoRST, GPIO_MODE_INPUT, GPIO_PULLUP_DISABLE, GPIO_PULLDOWN_DISABLE); // Connected to Reset; floating for POR
@@ -188,11 +191,17 @@ namespace RadioLinks
         // hook isr handler for specific gpio pin
         gpio_isr_handler_add(static_cast<gpio_num_t>(mIoDIO0), gpio_isr_handler, (void *)mIoDIO0);
         // hook isr handler for specific gpio pin
-        gpio_isr_handler_add(static_cast<gpio_num_t>(mIoDIO4), gpio_isr_handler, (void *)mIoDIO4);
+        if (mIoDIO4 != GPIO_NUM_NC)
+        {
+            gpio_isr_handler_add(static_cast<gpio_num_t>(mIoDIO4), gpio_isr_handler, (void *)mIoDIO4);
+        }
 
         // change gpio interrupt type for DIO0/DIO4 pins
         gpio_set_intr_type(static_cast<gpio_num_t>(mIoDIO0), GPIO_INTR_POSEDGE);
-        gpio_set_intr_type(static_cast<gpio_num_t>(mIoDIO4), GPIO_INTR_ANYEDGE);
+        if (mIoDIO4 != GPIO_NUM_NC)
+        {
+            gpio_set_intr_type(static_cast<gpio_num_t>(mIoDIO4), GPIO_INTR_ANYEDGE);
+        }
 
         ESP_LOGI(TAG, "Init... end");
     }
