@@ -87,4 +87,4 @@ Most of the parameters, excluding hardware configuration, can be changes using t
 - io_config for configuration related to IO-HomeControl protocol
 > [!IMPORTANT]
 > By default the command line interface is password protected. It strongly recommanded to change the default password (before building the firmware or after loading the firmware in ESP32 chip).
-In addition, a few parameters can be changes using MQTT topics
+In addition, a few parameters can be changed using MQTT topics.
