@@ -115,7 +115,7 @@ Once in this mode, you should:
 1. Use each remote to control each device (you can press the "open" button even if the blind is already opened, it is enough to get what you want). You will see logs like "command 00 from XXXXXX to 00003F" &rarr; note the XXXXXX, it is the ID of your remote.
 2. If you have a box (Tahoma, connectivity kit, ...), choose a device that is easy to reset and then extract your site key:
   - Remove the device from the app (like Tahoma app)
-  - Reset the device to forget any previously paired remote or box
+  - Reset the device to forget any previously paired remote or box. Depending on the device, it can be done through power supply and/or using the remote. See [there](https://www.youtube.com/watch?v=Z6ZYs2_-aa4) or [there](https://www.amc-production.fr/guides-conseils/remettre-a-zeros-moteur-rs100-solar-io-somfy) for example on RS100 SOLAR IO.
   - First, pair your remote(s) to control the device
   - Then, use the app (like Tahoma app) to pair the box to the device (like you probably did it in the past).
   - You should then see a log like "Extracted a key to control device XXXXXX: YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY" where XXXXXX is the device ID and YYYYYYYYYYYYYYYYYYYYYYYYYYYYYYYY is your private site key (never share it, even with me!).
@@ -137,7 +137,7 @@ Once you have everything from passive mode, you can change your configuration:
 - Then build, flash, monitor. You can use command line to take control of all your devices. Try 'help' to see the commands. You should start by adding already paired device and discover (and pair) any device that has nver been paired to a box.
 
 Notes:
-- If you want to pair a device with a new key and this device was already paired to a box in the past, you have to first reset (see Passive mode section)
+- If you want to pair a device with a new key and this device was already paired to a box in the past, you have to first reset (see [Passive mode section](README.md#passive-mode))
 - You shall keep your private site key, your ESP32-S3 Node ID and all your remotes and devices IDs in a secure place to be able to reload them in the future. If you keep them in the project folder and clean this folder you will have to restart from the beginning!
 
 ### How to contribute
