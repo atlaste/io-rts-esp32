@@ -818,7 +818,7 @@ namespace Helpers
                             default:
                                 error = true;
                                 cJSON_DeleteItemFromObject(cmps, device_id.c_str());
-                                ESP_LOGE(TAG, "Failed to add device to MQTT discovery: type not managed! (%d)", it->second.info.device_type);
+                                ESP_LOGE(TAG, "Failed to add device to MQTT discovery: type not managed! (%d)", static_cast<int>(it->second.info.device_type));
                                 break;
                             }
                             // add 'platform' even if device is deleted to inform Home Assistant that this component is deleted

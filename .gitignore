@@ -70,6 +70,7 @@ env/
 .clangd
 .clangd/
 .ccls-cache/
+.cache
 compile_commands.json
 
 # Windows specific

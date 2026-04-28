@@ -77,9 +77,13 @@ These features could be added, if useful:
 ### Hardware requirements
 In order to execute this project, you will need:
 - ESP32-S3 board
-- SX1276 radio module (it can be included on the ESP32 board) with SPI (SCLK, MOSI, MISO, CS) and RST, DIO0 and DIO4 pins wired to ESP32. Note: set -1 if DIO4 is not wired on your board.
+- A 868 MHz radio module:
+  - **SX1276 / SX1278** (preferred, natively supports IO-Homecontrol packet handling) with SPI (SCLK, MOSI, MISO, CS) and RST, DIO0 and DIO4 pins wired to ESP32. Note: set -1 if DIO4 is not wired on your board.
+  - **SX1261 / SX1262 / SX1268** (alternative, supported via software CRC + fixed-length FSK emulation) with SPI (SCLK, MOSI, MISO, NSS), RST, BUSY and DIO1 pins wired to ESP32. If your board uses a TCXO controlled by DIO3 (Heltec V3, Lilygo T3-S3 SX1262, EBytE E22-900M22S, ...), enable the corresponding option in `menuconfig`. If the antenna RF switch is gated by an external GPIO instead of (or in addition to) DIO2 - e.g. the **DFRobot ESP32-S3 LoRaWAN** wires `LORA_RXEN` to GPIO 35 - enable *External RX_EN GPIO drives the antenna switch RX path* (and/or its TX_EN counterpart) in `menuconfig`.
 - Wires to connect the radio module to the board
 - USB cable to connect the board to your computer
+
+The radio chip is selected at build time through `idf.py menuconfig` &rarr; `IO RTS Project Configuration` &rarr; `IO Configuration` &rarr; `Radio chip`.
 
 ### Development environment
 

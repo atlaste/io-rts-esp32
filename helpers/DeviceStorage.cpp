@@ -4,6 +4,7 @@
 #include "cJSON.h"
 #include "esp_log.h"
 
+#include <algorithm>
 #include <cstring>
 #include <dirent.h>
 #include <sys/stat.h>

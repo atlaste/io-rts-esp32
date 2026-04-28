@@ -57,7 +57,7 @@ namespace iohome
       psa_status_t status = psa_generate_random(challenge_out, HMAC_SIZE);
       if (status != PSA_SUCCESS)
       {
-        ESP_LOGE(TAG, "generate_challenge - Failed to generate random! (%d)", status);
+        ESP_LOGE(TAG, "generate_challenge - Failed to generate random! (%d)", (int)status);
       }
     }
 
@@ -120,7 +120,7 @@ namespace iohome
       status = psa_import_key(&attributes, key, AES_KEY_SIZE, &key_id);
       if (status != PSA_SUCCESS)
       {
-        ESP_LOGE(TAG, "aes128_encrypt - Failed to import a key (%d)", status);
+        ESP_LOGE(TAG, "aes128_encrypt - Failed to import a key (%d)", (int)status);
         return false;
       }
       psa_reset_key_attributes(&attributes);
@@ -129,7 +129,7 @@ namespace iohome
       psa_destroy_key(key_id); // don't forget to destroy the key!
       if (status != PSA_SUCCESS)
       {
-        ESP_LOGE(TAG, "aes128_encrypt - Failed to begin cipher operation (%d)", status);
+        ESP_LOGE(TAG, "aes128_encrypt - Failed to begin cipher operation (%d)", (int)status);
         return false;
       }
       return true;
@@ -153,7 +153,7 @@ namespace iohome
       status = psa_import_key(&attributes, key, AES_KEY_SIZE, &key_id);
       if (status != PSA_SUCCESS)
       {
-        ESP_LOGE(TAG, "aes128_decrypt - Failed to import a key (%d)", status);
+        ESP_LOGE(TAG, "aes128_decrypt - Failed to import a key (%d)", (int)status);
         return false;
       }
       psa_reset_key_attributes(&attributes);
@@ -162,7 +162,7 @@ namespace iohome
       psa_destroy_key(key_id); // don't forget to destroy the key!
       if (status != PSA_SUCCESS)
       {
-        ESP_LOGE(TAG, "aes128_decrypt - Failed to begin cipher operation (%d)", status);
+        ESP_LOGE(TAG, "aes128_decrypt - Failed to begin cipher operation (%d)", (int)status);
         return false;
       }
       return true;

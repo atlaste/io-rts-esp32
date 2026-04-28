@@ -6,6 +6,7 @@
 #include "linenoise/linenoise.h"
 #include "argtable3/argtable3.h"
 #include "esp_console.h"
+#include "esp_idf_version.h"
 #include "esp_log.h"
 
 using namespace Config;
@@ -177,9 +178,15 @@ static void cmd_line_task(void *arg)
             sLogin = true;
             while (sLogin) vTaskDelay(pdMS_TO_TICKS(1000)); // wait for logout
             vTaskDelay(pdMS_TO_TICKS(100));
-            // Remove command line tools
+            // Remove command line tools.
+            // esp_console_stop_repl() was added in IDF v5.4; on v5.3 we use the repl's del() method directly.
+#if defined(ESP_IDF_VERSION) && ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 4, 0)
             esp_console_stop_repl(sConsoleRepl);
-            // Reinit console (deinit done by esp_console_stop_repl)
+#else
+            if (sConsoleRepl != nullptr && sConsoleRepl->del != nullptr)
+                sConsoleRepl->del(sConsoleRepl);
+#endif
+            // Reinit console (deinit done by stop_repl/del above)
             init_console();
         }
     }

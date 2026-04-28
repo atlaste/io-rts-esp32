@@ -208,26 +208,46 @@ menu "IO RTS Project Configuration"
             help
                 Default Node ID if not changed by configuration later (3 bytes)
 
-        config IOHOMECONTROL_DEFAULT_TX_POWER
-            int "TX Power (dBm)"
-            range 0 20
-            default 20
-            help
-                Default Tx power in dBm (0-20)
+    config IOHOMECONTROL_DEFAULT_TX_POWER
+        int "TX Power (dBm)"
+        range 0 22
+        default 20
+        help
+            Default Tx power in dBm. Valid range is 0-20 for SX1276 (PA_BOOST), 0-22 for SX1262.
 
-        choice IOHOMECONTROL_SX1276_SPI_HOST
-            prompt "Choose SPI_HOST to use"
-            default IOHOMECONTROL_SX1276_SPI_HOST2
-            help
-                You can use same SPI_HOST for Ethernet and radio modules and share SCLK, MOSI and MISO pins.
+    choice IOHOMECONTROL_RADIO_CHIP
+        prompt "Radio chip"
+        default IOHOMECONTROL_RADIO_SX1276
+        help
+            Pick the radio module connected to the ESP32. Both chips operate in 2-FSK at 868 MHz, the SX1276 is
+            preferred because it natively supports the IO-Homecontrol packet format. The SX1262 driver emulates
+            the IO-Home framing in software (fixed-length receive + software CRC-CCITT) so it should be wire-
+            compatible, but is less battle-tested.
 
-            config IOHOMECONTROL_SX1276_SPI_HOST2
-                bool "SPI_HOST2"
-            
-            config IOHOMECONTROL_SX1276_SPI_HOST3
-                bool "SPI_HOST3"
-                depends on SOC_SPI_PERIPH_NUM > 2
-        endchoice
+        config IOHOMECONTROL_RADIO_SX1276
+            bool "Semtech SX1276 / SX1278"
+
+        config IOHOMECONTROL_RADIO_SX1262
+            bool "Semtech SX1261 / SX1262 / SX1268"
+    endchoice
+
+    choice IOHOMECONTROL_SX1276_SPI_HOST
+        prompt "Choose SPI_HOST to use"
+        default IOHOMECONTROL_SX1276_SPI_HOST2
+        help
+            You can use same SPI_HOST for Ethernet and radio modules and share SCLK, MOSI and MISO pins.
+            (this setting applies to both SX1276 and SX1262 radio modules)
+
+        config IOHOMECONTROL_SX1276_SPI_HOST2
+            bool "SPI_HOST2"
+        
+        config IOHOMECONTROL_SX1276_SPI_HOST3
+            bool "SPI_HOST3"
+            depends on SOC_SPI_PERIPH_NUM > 2
+    endchoice
+
+    menu "SX1276 / SX1278 Pin Configuration"
+        depends on IOHOMECONTROL_RADIO_SX1276
 
         config IOHOMECONTROL_SX1276_SPI_CS
             int "SPI CS GPIO Num"
@@ -257,6 +277,95 @@ menu "IO RTS Project Configuration"
             help
                 GPIO number for DIO4 pin connected to SX1276 radio module. Set -1 if not connected on your board.
     endmenu
+
+    menu "SX1262 / SX1261 / SX1268 Pin Configuration"
+        depends on IOHOMECONTROL_RADIO_SX1262
+
+        config IOHOMECONTROL_SX1262_SPI_CS
+            int "SPI CS / NSS GPIO Num"
+            range ENV_GPIO_RANGE_MIN ENV_GPIO_OUT_RANGE_MAX
+            default 7
+            help
+                GPIO number for SPI CS (NSS) pin connected to the SX1262 radio module.
+
+        config IOHOMECONTROL_SX1262_RST
+            int "RST GPIO Num"
+            range ENV_GPIO_RANGE_MIN ENV_GPIO_OUT_RANGE_MAX
+            default 8
+            help
+                GPIO number for RESET pin connected to the SX1262 radio module (active low).
+
+        config IOHOMECONTROL_SX1262_BUSY
+            int "BUSY GPIO Num"
+            range ENV_GPIO_RANGE_MIN ENV_GPIO_IN_RANGE_MAX
+            default 13
+            help
+                GPIO number for BUSY pin (input) connected to the SX1262 radio module.
+
+        config IOHOMECONTROL_SX1262_DIO1
+            int "DIO1 GPIO Num"
+            range ENV_GPIO_RANGE_MIN ENV_GPIO_IN_RANGE_MAX
+            default 14
+            help
+                GPIO number for DIO1 pin (input, IRQ) connected to the SX1262 radio module.
+
+        config IOHOMECONTROL_SX1262_USE_DIO2_RF_SWITCH
+            bool "Use DIO2 as antenna switch control"
+            default y
+            help
+                Enable when the radio module wires DIO2 to the antenna RF switch (very common on
+                Lilygo / Heltec / Ebyte SX1262 modules). Disable if DIO2 is unused on your board.
+
+        config IOHOMECONTROL_SX1262_USE_TCXO
+            bool "Module has TCXO controlled by DIO3"
+            default n
+            help
+                Enable if the SX1262 module is equipped with a TCXO whose enable line is wired to
+                DIO3 (Heltec V3, Lilygo T3-S3 SX1262, EBytE E22-900M22S, ...).
+
+        config IOHOMECONTROL_SX1262_TCXO_VOLTAGE_MV
+            int "TCXO control voltage (mV)"
+            depends on IOHOMECONTROL_SX1262_USE_TCXO
+            range 1600 3300
+            default 1800
+            help
+                Voltage applied by DIO3 to power the TCXO. Common values are 1800 or 3300 mV.
+
+        config IOHOMECONTROL_SX1262_USE_RXEN
+            bool "External RX_EN GPIO drives the antenna switch RX path"
+            default n
+            help
+                Enable when the antenna RF switch RX path is gated by an ESP32 GPIO instead of (or
+                in addition to) DIO2. Common on the DFRobot ESP32-S3 LoRaWAN board where DIO2
+                drives TX but a separate "LORA_RXEN" pin enables RX.
+
+        config IOHOMECONTROL_SX1262_RXEN
+            int "RX_EN GPIO Num"
+            depends on IOHOMECONTROL_SX1262_USE_RXEN
+            range ENV_GPIO_RANGE_MIN ENV_GPIO_OUT_RANGE_MAX
+            default 42
+            help
+                GPIO number wired to the antenna RF switch RX_EN pin. Driven HIGH while receiving,
+                LOW otherwise. (DFRobot ESP32-S3 LoRaWAN: GPIO 42)
+
+        config IOHOMECONTROL_SX1262_USE_TXEN
+            bool "External TX_EN GPIO drives the antenna switch TX path"
+            default n
+            help
+                Enable when the antenna RF switch TX path is gated by an ESP32 GPIO. Most modules
+                use DIO2 for this, so leave this disabled unless your schematic shows a dedicated
+                TX_EN line going to the ESP32.
+
+        config IOHOMECONTROL_SX1262_TXEN
+            int "TX_EN GPIO Num"
+            depends on IOHOMECONTROL_SX1262_USE_TXEN
+            range ENV_GPIO_RANGE_MIN ENV_GPIO_OUT_RANGE_MAX
+            default 36
+            help
+                GPIO number wired to the antenna RF switch TX_EN pin. Driven HIGH while
+                transmitting, LOW otherwise.
+    endmenu
+endmenu
 
     menu "MQTT Client configuration"
         config MQTT_CLIENT_ENABLE

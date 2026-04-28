@@ -42,7 +42,9 @@ namespace IoRts
     static void deviceStatusCallback(const std::string deviceID, const iohome::IoDevice &device)
     {
         ESP_LOGI(TAG, "Callback received device status for %s: %s (0x%02X/0x%02X) / Position %.1f / Target %0.1f / Moving: %s / Inverted: %s / Deleted: %s",
-                 deviceID.c_str(), device.info.name, device.info.device_type, device.info.device_subtype,
+                 deviceID.c_str(), device.info.name,
+                 static_cast<unsigned>(device.info.device_type),
+                 static_cast<unsigned>(device.info.device_subtype),
                  device.position, device.target,
                  device.is_stopped ? "No" : "Yes", device.info.is_openclose_inverted ? "Yes" : "No", device.is_deleted ? "Yes" : "No");
         if (sIoRtsManager == nullptr)
@@ -233,13 +235,46 @@ namespace IoRts
     }
     void IoRtsManager::InitializeIo()
     {
-        // Initialize IO-HOMECONTROL
-        mSX1276Radio = new RadioLinks::RadioSX1276(Config::GetSX1276SpiHost(),
-                                                   CONFIG_IOHOMECONTROL_SX1276_SPI_CS, CONFIG_IOHOMECONTROL_SX1276_RST,
-                                                   CONFIG_IOHOMECONTROL_SX1276_DIO0, CONFIG_IOHOMECONTROL_SX1276_DIO4);
-        if (mSX1276Radio != nullptr)
+        // Initialize IO-HOMECONTROL: instantiate the radio driver matching the chip selected in Kconfig.
+#if defined(CONFIG_IOHOMECONTROL_RADIO_SX1262)
+        ESP_LOGI(TAG, "Using SX1262 radio module");
+        mRadio = new RadioLinks::RadioSX1262(Config::GetRadioSpiHost(),
+                                             CONFIG_IOHOMECONTROL_SX1262_SPI_CS,
+                                             CONFIG_IOHOMECONTROL_SX1262_RST,
+                                             CONFIG_IOHOMECONTROL_SX1262_BUSY,
+                                             CONFIG_IOHOMECONTROL_SX1262_DIO1,
+#if defined(CONFIG_IOHOMECONTROL_SX1262_USE_DIO2_RF_SWITCH)
+                                             true,
+#else
+                                             false,
+#endif
+#if defined(CONFIG_IOHOMECONTROL_SX1262_USE_TCXO)
+                                             true,
+                                             CONFIG_IOHOMECONTROL_SX1262_TCXO_VOLTAGE_MV,
+#else
+                                             false,
+                                             1800,
+#endif
+#if defined(CONFIG_IOHOMECONTROL_SX1262_USE_RXEN)
+                                             CONFIG_IOHOMECONTROL_SX1262_RXEN,
+#else
+                                             -1,
+#endif
+#if defined(CONFIG_IOHOMECONTROL_SX1262_USE_TXEN)
+                                             CONFIG_IOHOMECONTROL_SX1262_TXEN
+#else
+                                             -1
+#endif
+        );
+#else
+        ESP_LOGI(TAG, "Using SX1276 radio module");
+        mRadio = new RadioLinks::RadioSX1276(Config::GetRadioSpiHost(),
+                                             CONFIG_IOHOMECONTROL_SX1276_SPI_CS, CONFIG_IOHOMECONTROL_SX1276_RST,
+                                             CONFIG_IOHOMECONTROL_SX1276_DIO0, CONFIG_IOHOMECONTROL_SX1276_DIO4);
+#endif
+        if (mRadio != nullptr)
         {
-            mIoHome = new iohome::IoHomeControl(mSX1276Radio, loggerCallback, deviceStatusCallback);
+            mIoHome = new iohome::IoHomeControl(mRadio, loggerCallback, deviceStatusCallback);
             if (mIoHome != nullptr)
             {
                 mIoHome->SetVerbose(IoHomeConfig::isLoggingEnabled());

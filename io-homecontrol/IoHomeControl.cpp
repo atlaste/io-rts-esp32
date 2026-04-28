@@ -14,6 +14,8 @@
 #include <stdio.h>
 #include <time.h>
 #include "esp_log.h"
+#include <algorithm>
+#include <cstring>
 #include <ios>
 #include <sstream>
 #include <map>

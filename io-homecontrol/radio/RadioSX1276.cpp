@@ -1,6 +1,7 @@
 #include "RadioSX1276.hpp"
 #include "sx1276Regs-Fsk.h"
 
+#include <cstring>
 #include <time.h>
 #include "esp_task_wdt.h"
 #include "esp_timer.h"

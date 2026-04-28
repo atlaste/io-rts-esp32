@@ -7,6 +7,7 @@
 #include "iohome_frame.hpp"
 #include "iohome_crypto.h"
 #include "esp_log.h"
+#include <cstring>
 
 static const char *TAG = "io-hframe";
 

@@ -1,6 +1,7 @@
 idf_component_register(SRCS "main.cpp" "IoRtsManager.cpp" "../io-homecontrol/IoHomeControl.cpp" "../io-homecontrol/protocol/iohome_commands.cpp"
                         "../io-homecontrol/protocol/iohome_crypto.cpp" "../io-homecontrol/protocol/iohome_frame.cpp"
-                        "../io-homecontrol/radio/RadioSX1276.cpp" "../helpers/NvsHelpers.cpp" "../helpers/NetworkHelpers.cpp" "../helpers/MqttHelpers.cpp"
+                        "../io-homecontrol/radio/RadioSX1276.cpp" "../io-homecontrol/radio/RadioSX1262.cpp"
+                        "../helpers/NvsHelpers.cpp" "../helpers/NetworkHelpers.cpp" "../helpers/MqttHelpers.cpp"
                         "../helpers/DeviceStorage.cpp" "../helpers/EncodingHelpers.cpp" "../config/MiscConfig.cpp"
                         "../config/NetworkConfig.cpp" "../config/HardwareConfig.cpp" "../config/MqttConfig.cpp" "../config/IoHomeConfig.cpp"
                         "../helpers/CmdLineManagement.cpp" "../helpers/CmdLineIoTools.cpp" "../helpers/CmdLineMqttTools.cpp" "../helpers/CmdLineNetworkTools.cpp"

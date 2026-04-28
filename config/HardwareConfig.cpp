@@ -94,7 +94,7 @@ namespace Config
         return err;
     }
 
-    spi_host_device_t GetSX1276SpiHost()
+    spi_host_device_t GetRadioSpiHost()
     {
 #ifdef CONFIG_IOHOMECONTROL_SX1276_SPI_HOST3
     return SPI3_HOST;

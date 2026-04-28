@@ -217,7 +217,12 @@ namespace Config
 
     const std::string NetworkConfig::GetSAEPasswordId()
     {
+#ifdef CONFIG_ESP_WIFI_PW_ID
         std::string wifi_pwid = CONFIG_ESP_WIFI_PW_ID;
+#else
+        // Kconfig only defines CONFIG_ESP_WIFI_PW_ID when SAE H2E (or BOTH) is selected.
+        std::string wifi_pwid;
+#endif
         NvsHelpers::GetString(NETWORK_CONFIG_NAMESPACE, NETWORK_CONFIG_WIFI_PWID, wifi_pwid);
         return wifi_pwid;
     }

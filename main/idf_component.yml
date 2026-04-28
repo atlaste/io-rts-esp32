@@ -2,7 +2,7 @@
 dependencies:
   ## Required IDF version
   idf:
-    version: '>=6.0.0'
+    version: '>=5.3.0'
   # # Put list of dependencies here
   # # For components maintained by Espressif:
   # component: "~1.0.0"
@@ -17,7 +17,14 @@ dependencies:
   espressif/w5500:
     version: ^1.0.0
     matches:
-    - if: $CONFIG{CONNECTIVITY_CHOICE_ETH} == True
-  espressif/mqtt: ^1.0.0
+    - if: $CONFIG{CONNECTIVITY_CHOICE_ETH} == True AND idf_version >=6.0
+  ## ESP-IDF v5.3 ships a built-in `mqtt` component (esp-mqtt), in v6.0+ it has been extracted
+  ## into a managed component. The `rules` block below pulls the managed component only when
+  ## the active IDF is >=6.0, otherwise the built-in component is used and listing the managed
+  ## version would cause a "Multiple candidates" error.
+  espressif/mqtt:
+    version: ^1.0.0
+    rules:
+      - if: "idf_version >=6.0"
   espressif/cjson: ^1.7.19~2
   joltwallet/littlefs: ^1.20.4
