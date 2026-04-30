@@ -106,6 +106,66 @@ namespace iohome
         return true;
     }
 
+    bool create_discovery_response(IoFrame &frame,
+                                   const uint8_t *own_node_id,
+                                   const uint8_t *dst_node_id,
+                                   DeviceType device_type,
+                                   uint8_t device_subtype,
+                                   Manufacturer manufacturer)
+    {
+        // 2W frame, end=true / start=false: we are *answering* the controller's 0x28 - this
+        // is a one-shot terminal reply, the controller takes over the conversation next.
+        // Critically, we must NOT set start=true here: the radio task interprets start=true
+        // as "expect more replies on this channel", which keeps it pinned for 300 ms after
+        // TX and makes us miss the controller's follow-up 0x31 KEY_INIT_TRANSFER on FREQ_CH2.
+        // low_power=false: spoofed device is always on, no need for long preambles.
+        init_frame(frame, true /*is_2w*/, false /*is_start*/, true /*is_end*/, false /*is_lowPower*/);
+
+        set_destination(frame, dst_node_id);
+        set_source(frame, own_node_id);
+
+        // Encode device info matching the inverse of process_discovery_response():
+        //   data[0..1] : device_type (10 bits) | device_subtype (6 bits)
+        //                device_type   = (data[0] << 2) | (data[1] >> 6)
+        //                device_subtype= data[1] & CMD_PARAM_SUBTYPE_MASK
+        //   data[2..4] : TBD (zero-filled, observed in captures)
+        //   data[5]    : manufacturer ID
+        const uint8_t type_byte = static_cast<uint8_t>(device_type);
+        uint8_t data[6];
+        data[0] = static_cast<uint8_t>(type_byte >> 2);
+        data[1] = static_cast<uint8_t>(((type_byte & 0x03) << 6) | (device_subtype & CMD_PARAM_SUBTYPE_MASK));
+        data[2] = 0x00;
+        data[3] = 0x00;
+        data[4] = 0x00;
+        data[5] = static_cast<uint8_t>(manufacturer);
+
+        return set_command(frame, CMD_DISCOVER_RESPONSE, data, sizeof(data));
+    }
+
+    bool create_discovery_confirmation_ack(IoFrame &frame, const uint8_t *own_node_id, const uint8_t *dst_node_id)
+    {
+        // ACK to 0x2C - more pairing frames will follow from the controller (KEY_INIT_TRANSFER),
+        // so we leave end=false to advertise that this is mid-exchange.
+        init_frame(frame, true /*is_2w*/, false /*is_start*/, false /*is_end*/, false /*is_lowPower*/);
+
+        set_destination(frame, dst_node_id);
+        set_source(frame, own_node_id);
+
+        return set_command(frame, CMD_DISCOVER_CONFIRMATION_ACK);
+    }
+
+    bool create_key_transfer_confirmation(IoFrame &frame, const uint8_t *own_node_id, const uint8_t *dst_node_id)
+    {
+        // Final frame in the pairing handshake from the device side: end=true, no further
+        // response expected from us.
+        init_frame(frame, true /*is_2w*/, false /*is_start*/, true /*is_end*/, false /*is_lowPower*/);
+
+        set_destination(frame, dst_node_id);
+        set_source(frame, own_node_id);
+
+        return set_command(frame, CMD_KEY_TRANSFER_CONFIRMATION);
+    }
+
     bool create_discoveryspe_request(IoFrame &frame, const uint8_t *own_node_id, const uint8_t system_key[AES_KEY_SIZE])
     {
         // Initialize frame

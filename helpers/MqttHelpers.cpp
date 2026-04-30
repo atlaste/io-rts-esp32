@@ -386,7 +386,7 @@ namespace Helpers
     }
 
     MqttHelpers::MqttHelpers(IoRts::IoRtsManager *manager)
-        : mIoRtsManager(manager), mStarted(false)
+        : mIoRtsManager(manager), mStarted(false), mMqttClientHandle(nullptr)
     {
         mIsIoHomePassive = IoHomeConfig::isPassiveModeEnabled();
         mTopicPrefix = MqttConfig::GetTopicPrefix();
@@ -431,6 +431,7 @@ namespace Helpers
         {
             ESP_LOGE(TAG, "Failed to register MQTT event handler! (%d)", err);
             esp_mqtt_client_destroy(mMqttClientHandle);
+            mMqttClientHandle = nullptr;
             return ESP_FAIL;
         }
         // Start
@@ -439,6 +440,7 @@ namespace Helpers
         {
             ESP_LOGE(TAG, "Failed to start MQTT client! (%d)", err);
             esp_mqtt_client_destroy(mMqttClientHandle);
+            mMqttClientHandle = nullptr;
             return ESP_FAIL;
         }
         mStarted = true;
@@ -999,6 +1001,12 @@ namespace Helpers
     }
     void MqttHelpers::SendLog(const std::string &log)
     {
+        // Drop logs that arrive before the MQTT client is actually started: esp_mqtt_client_publish
+        // dereferences an internal mutex that is only created by esp_mqtt_client_init (called from
+        // StartMqttClient). The IoHomeControl log task can fire before StartMqttClient has run and
+        // would otherwise crash the system on a null pointer.
+        if (!mStarted || mMqttClientHandle == nullptr)
+            return;
         std::string topic = mTopicPrefix + MQTT_CLIENT_LOG_TOPIC;
         esp_mqtt_client_publish(mMqttClientHandle, topic.c_str(), log.c_str(), 0, 0, 0);
     }

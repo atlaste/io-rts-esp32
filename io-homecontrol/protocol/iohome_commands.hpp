@@ -37,6 +37,39 @@ namespace iohome
     /// @return true on success
     bool process_discovery_response(const IoFrame &frame, IoDevice &device);
 
+    /// @brief Create a Discovery Response IO Frame (0x29) - sent by a (real or spoofed) device
+    ///        in response to a 0x28 DISCOVER_REQUEST broadcast.
+    /// @param frame Output IoFrame structure
+    /// @param own_node_id Source node ID (3 bytes) - the device's node ID
+    /// @param dst_node_id Destination node ID (3 bytes) - the controller that sent the request
+    /// @param device_type IO-Homecontrol device type to advertise (e.g., ROLLER_SHUTTER)
+    /// @param device_subtype Device subtype to advertise (6 bits, default 0)
+    /// @param manufacturer Manufacturer to advertise (e.g., SOMFY)
+    /// @return true on success
+    bool create_discovery_response(IoFrame &frame,
+                                   const uint8_t *own_node_id,
+                                   const uint8_t *dst_node_id,
+                                   DeviceType device_type,
+                                   uint8_t device_subtype,
+                                   Manufacturer manufacturer);
+
+    /// @brief Create a Discovery Confirmation ACK IO Frame (0x2D) - sent by a (real or spoofed)
+    ///        device in response to a 0x2C DISCOVER_CONFIRMATION from the controller.
+    /// @param frame Output IoFrame structure
+    /// @param own_node_id Source node ID (3 bytes) - the device's node ID
+    /// @param dst_node_id Destination node ID (3 bytes) - the controller
+    /// @return true on success
+    bool create_discovery_confirmation_ack(IoFrame &frame, const uint8_t *own_node_id, const uint8_t *dst_node_id);
+
+    /// @brief Create a Key Transfer Confirmation IO Frame (0x33) - sent by a (real or spoofed)
+    ///        device in response to a 0x32 KEY_TRANSFER from the controller, signalling that
+    ///        the system key was received and accepted.
+    /// @param frame Output IoFrame structure
+    /// @param own_node_id Source node ID (3 bytes) - the device's node ID
+    /// @param dst_node_id Destination node ID (3 bytes) - the controller
+    /// @return true on success
+    bool create_key_transfer_confirmation(IoFrame &frame, const uint8_t *own_node_id, const uint8_t *dst_node_id);
+
     /// @brief Create a Discovery SPE IO Frame (0x2A)
     /// @param frame Output IoFrame structure
     /// @param own_node_id Source node ID (3 bytes)

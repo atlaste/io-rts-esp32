@@ -14,10 +14,18 @@ dependencies:
   #   # `public` flag doesn't have an effect dependencies of the `main` component.
   #   # All dependencies of `main` are public by default.
   #   public: true
+  ## ESP-IDF v5.3 ships a built-in W5500 driver inside `esp_eth`. In v6.0+ it has been
+  ## extracted into a managed component, so we only pull it on IDF >=6.0. The actual
+  ## W5500 code is also guarded by `#ifdef CONFIG_CONNECTIVITY_CHOICE_ETH` in C/C++ so
+  ## the unused driver is stripped out at compile time when Ethernet is not selected.
+  ##
+  ## Note: we intentionally avoid the `$CONFIG{...}` substitution syntax in the `if`
+  ## clause because it requires idf-component-manager >=2.x with sdkconfig support,
+  ## which is newer than the one shipped with IDF 5.3.
   espressif/w5500:
     version: ^1.0.0
-    matches:
-    - if: $CONFIG{CONNECTIVITY_CHOICE_ETH} == True AND idf_version >=6.0
+    rules:
+      - if: "idf_version >=6.0"
   ## ESP-IDF v5.3 ships a built-in `mqtt` component (esp-mqtt), in v6.0+ it has been extracted
   ## into a managed component. The `rules` block below pulls the managed component only when
   ## the active IDF is >=6.0, otherwise the built-in component is used and listing the managed

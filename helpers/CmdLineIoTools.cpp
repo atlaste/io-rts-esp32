@@ -36,6 +36,119 @@ static void register_iodiscover(void)
     ESP_ERROR_CHECK(esp_console_cmd_register(&iodiscover_cmd));
 }
 
+// ******************* IO STEAL KEY ********************
+
+/// @brief Structure used by the 'io_stealkey' command
+static struct
+{
+    struct arg_int *timeout_flag;     // -t/--timeout <seconds>
+    struct arg_int *timeout_positional; // bare positional <seconds>
+    struct arg_end *end;
+} iostealkey_args;
+
+static int do_iostealkey_cmd(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&iostealkey_args);
+    if (nerrors != 0)
+    {
+        arg_print_errors(stderr, iostealkey_args.end, argv[0]);
+        return 1;
+    }
+
+    uint32_t timeout_ms = 60000; // default 60 s
+    if (iostealkey_args.timeout_flag->count > 0 && iostealkey_args.timeout_flag->ival[0] > 0)
+    {
+        timeout_ms = (uint32_t)iostealkey_args.timeout_flag->ival[0] * 1000;
+    }
+    else if (iostealkey_args.timeout_positional->count > 0 && iostealkey_args.timeout_positional->ival[0] > 0)
+    {
+        timeout_ms = (uint32_t)iostealkey_args.timeout_positional->ival[0] * 1000;
+    }
+
+    ESP_LOGW(TAG, "io_stealkey: starting active key extraction (timeout=%ums)", (unsigned)timeout_ms);
+    ESP_LOGW(TAG, "io_stealkey: put your Tahoma in 'Add device' mode now and ensure no real device is in pair mode.");
+    if (!sIoHome->StealSystemKey(timeout_ms))
+    {
+        ESP_LOGW(TAG, "io_stealkey: failed - see logs for the stage that timed out");
+        return 1;
+    }
+    ESP_LOGW(TAG, "io_stealkey: success - copy the printed node_id and system_key into your sdkconfig.");
+    return 0;
+}
+
+static void register_iostealkey(void)
+{
+    iostealkey_args.timeout_flag = arg_int0("t", "timeout", "<seconds>", "Timeout in seconds (default 60)");
+    iostealkey_args.timeout_positional = arg_int0(NULL, NULL, "<seconds>", "Timeout in seconds (default 60)");
+    iostealkey_args.end = arg_end(2);
+    const esp_console_cmd_t iostealkey_cmd = {
+        .command = "io_stealkey",
+        .help = "Impersonate a fake IO-Homecontrol device to extract the controller's (Tahoma) system key during pairing",
+        .hint = NULL,
+        .func = &do_iostealkey_cmd,
+        .argtable = &iostealkey_args,
+        .func_w_context = NULL,
+        .context = NULL};
+    ESP_ERROR_CHECK(esp_console_cmd_register(&iostealkey_cmd));
+}
+
+// ******************* IO SNIFF PAIRING ********************
+
+/// @brief Structure used by the 'io_sniffpair' command
+static struct
+{
+    struct arg_int *timeout_flag;       // -t/--timeout <seconds>
+    struct arg_int *timeout_positional; // bare positional <seconds>
+    struct arg_end *end;
+} iosniffpair_args;
+
+static int do_iosniffpair_cmd(int argc, char **argv)
+{
+    int nerrors = arg_parse(argc, argv, (void **)&iosniffpair_args);
+    if (nerrors != 0)
+    {
+        arg_print_errors(stderr, iosniffpair_args.end, argv[0]);
+        return 1;
+    }
+
+    uint32_t timeout_ms = 300000; // default 5 min - real pairings can take a while
+    if (iosniffpair_args.timeout_flag->count > 0 && iosniffpair_args.timeout_flag->ival[0] > 0)
+    {
+        timeout_ms = (uint32_t)iosniffpair_args.timeout_flag->ival[0] * 1000;
+    }
+    else if (iosniffpair_args.timeout_positional->count > 0 && iosniffpair_args.timeout_positional->ival[0] > 0)
+    {
+        timeout_ms = (uint32_t)iosniffpair_args.timeout_positional->ival[0] * 1000;
+    }
+
+    ESP_LOGW(TAG, "io_sniffpair: starting passive pair sniffer (timeout=%ums)", (unsigned)timeout_ms);
+    ESP_LOGW(TAG, "io_sniffpair: trigger a real pairing now: controller in 'Add device' mode AND");
+    ESP_LOGW(TAG, "io_sniffpair: a real IO device's pair sequence (factory reset + button press / etc).");
+    if (!sIoHome->SniffPairing(timeout_ms))
+    {
+        ESP_LOGW(TAG, "io_sniffpair: failed - see logs for the stage that timed out");
+        return 1;
+    }
+    ESP_LOGW(TAG, "io_sniffpair: success - copy the printed node_id and system_key into your sdkconfig.");
+    return 0;
+}
+
+static void register_iosniffpair(void)
+{
+    iosniffpair_args.timeout_flag       = arg_int0("t", "timeout", "<seconds>", "Timeout in seconds (default 300)");
+    iosniffpair_args.timeout_positional = arg_int0(NULL, NULL, "<seconds>", "Timeout in seconds (default 300)");
+    iosniffpair_args.end                = arg_end(2);
+    const esp_console_cmd_t iosniffpair_cmd = {
+        .command = "io_sniffpair",
+        .help = "Passively sniff a real controller<->device pairing handshake to recover the controller's system key",
+        .hint = NULL,
+        .func = &do_iosniffpair_cmd,
+        .argtable = &iosniffpair_args,
+        .func_w_context = NULL,
+        .context = NULL};
+    ESP_ERROR_CHECK(esp_console_cmd_register(&iosniffpair_cmd));
+}
+
 // ******************* IO ADD ********************
 
 /// @brief Structure used by the 'io_add' command
@@ -753,6 +866,8 @@ void register_io_cmdline_tools(IoRts::IoRtsManager *io_rts_manager)
     sIoRtsManager = io_rts_manager;
     sIoHome = io_rts_manager->mIoHome;
     register_iodiscover();
+    register_iostealkey();
+    register_iosniffpair();
     register_ioadd();
     register_ioremove();
     register_ioopen();

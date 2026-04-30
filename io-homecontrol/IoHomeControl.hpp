@@ -109,6 +109,63 @@ namespace iohome
     /// @brief Start device discovery and pair any discovered device
     bool DiscoverAndPairDevice();
 
+    /// @brief Active mode: impersonate an IO-Homecontrol device, drive the 6-step pairing
+    ///        handshake and recover the controller's (e.g. Tahoma) system key.
+    ///
+    /// The protocol's pairing key transfer is encrypted with a publicly-known TRANSFER_KEY,
+    /// so any party that participates in the handshake can decrypt the system key. This
+    /// helper waits for a 0x28 DISCOVER_REQUEST broadcast (user must put the controller in
+    /// "Add device" mode), then plays the device role:
+    ///   1. respond with 0x29 DISCOVER_RESPONSE (fake type/manufacturer)
+    ///   2. respond with 0x2D DISCOVER_CONFIRMATION_ACK to the 0x2C
+    ///   3. respond to 0x31 KEY_INIT_TRANSFER with 0x3C CHALLENGE_REQUEST (random challenge)
+    ///   4. on 0x32 KEY_TRANSFER, decrypt the system key using TRANSFER_KEY + our challenge
+    ///   5. respond with 0x33 KEY_TRANSFER_CONFIRMATION
+    ///
+    /// On success, the recovered controller node_id and system_key are logged loudly so
+    /// the user can copy them into Kconfig.
+    ///
+    /// @attention This requires no other device to be in pairing mode at the same time
+    ///            (otherwise the controller may pick the real device's response instead).
+    /// @attention Passive mode is OK to call this from - the call will temporarily enable TX
+    ///            for the duration of the handshake and restore the passive flag on exit.
+    /// @param timeout_ms Maximum total time to wait, in milliseconds (default 60000 = 60 s).
+    /// @return true if a system key was successfully extracted, false otherwise.
+    bool StealSystemKey(uint32_t timeout_ms = 60000);
+
+    /// @brief Passive mode: sniff a real pairing handshake between the controller and a real
+    ///        IO-Homecontrol device, and recover the controller's system key without
+    ///        transmitting anything.
+    ///
+    /// During pairing, the controller (e.g. Tahoma) and the device exchange (in 2W mode):
+    ///   - controller -> device : 0x31 KEY_INIT_TRANSFER  (no data, but the 0x31 cmd byte
+    ///                                                     itself feeds the IV)
+    ///   - device     -> controller : 0x3C CHALLENGE_REQUEST  (6-byte challenge, plaintext)
+    ///   - controller -> device : 0x32 KEY_TRANSFER       (16-byte system_key encrypted with
+    ///                                                     the publicly-known TRANSFER_KEY,
+    ///                                                     keyed by 0x31 + the challenge)
+    ///   - device     -> controller : 0x33 KEY_TRANSFER_CONFIRMATION
+    ///
+    /// Because TRANSFER_KEY is a fixed protocol constant, anyone who captures all three of
+    /// 0x31 (we only need the fact that it happened + the addresses), 0x3C (challenge) and
+    /// 0x32 (encrypted key) can decrypt the system key off-line. We listen on all 3 IO
+    /// channels in normal RX mode and never TX, so this works fine in passive mode.
+    ///
+    /// Workflow:
+    ///   1. boot in normal mode (passive is OK - no system key needed up-front)
+    ///   2. run this with a long enough timeout (e.g. 5 minutes)
+    ///   3. put the controller in 'Add device' mode AND simultaneously trigger pairing on a
+    ///      real Somfy/Velux/etc IO-Homecontrol device (factory-reset + button press, or
+    ///      whatever the device's pair sequence is)
+    ///   4. on success, the controller node_id and decrypted system_key are logged for
+    ///      copying into Kconfig
+    ///
+    /// @attention The whole handshake must happen during this single call - if the sniffer
+    ///            misses any of the three frames it will time out. Re-run if it does.
+    /// @param timeout_ms Maximum total time to wait, in milliseconds (default 300000 = 5 min).
+    /// @return true if a system key was successfully extracted, false otherwise.
+    bool SniffPairing(uint32_t timeout_ms = 300000);
+
     /// @brief Set position of an actuator (e.g., blind, shutter)
     /// @param deviceID Device ID (6 characters as hex representation of the 3 bytes, eg "112233")
     /// @param position Position value (0 is open / 0% closed / light on / switch on, 100 is 100% closed / light off / switch off)

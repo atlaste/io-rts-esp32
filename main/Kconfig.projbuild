@@ -327,9 +327,13 @@ menu "IO RTS Project Configuration"
             int "TCXO control voltage (mV)"
             depends on IOHOMECONTROL_SX1262_USE_TCXO
             range 1600 3300
-            default 1800
+            default 3300
             help
                 Voltage applied by DIO3 to power the TCXO. Common values are 1800 or 3300 mV.
+                Heltec V3 modules use 1800 mV. The DFRobot ESP32-S3 LoRaWAN board (Beetle) and
+                the Semtech reference designs use 3300 mV. When in doubt try 3300 mV first; an
+                undervolted TCXO can appear to start (no XOSC_START_ERR) but produce a degraded
+                clock that breaks GFSK sync detection.
 
         config IOHOMECONTROL_SX1262_USE_RXEN
             bool "External RX_EN GPIO drives the antenna switch RX path"
@@ -355,6 +359,50 @@ menu "IO RTS Project Configuration"
                 Enable when the antenna RF switch TX path is gated by an ESP32 GPIO. Most modules
                 use DIO2 for this, so leave this disabled unless your schematic shows a dedicated
                 TX_EN line going to the ESP32.
+
+        config IOHOMECONTROL_SX1262_DIAG_SNIFFER
+            bool "[DEBUG] 868 MHz GFSK sniffer mode (no preamble + 1-byte sync, big captures)"
+            default n
+            help
+                Turn the SX1262 into a wide GFSK sniffer. Disables preamble detection entirely,
+                programs a 1-byte sync (0xFF - the first non-preamble-like byte of the IO-Home
+                sync 55 FF 33, also common in Somfy IO bursts) and captures up to 240 bytes per
+                trigger. Re-arms continuously. Each RX_DONE is dumped as a hex chunk with
+                timestamp + RSSI + frequency so the bytes can be post-processed off-line to
+                find IO-Homecontrol, Somfy IO, evohome, Itho Daalderop, ... patterns regardless
+                of byte alignment. Skips the IO-Homecontrol CRC decode (everything is captured
+                raw). Expect frequent low-RSSI false triggers from noise; they are harmless and
+                easy to filter by RSSI in post-processing. Disable in production.
+
+        config IOHOMECONTROL_SX1262_DIAG_SNIFFER_RSSI_GATE_DBM
+            int "[DEBUG] Sniffer RSSI gate (dBm, captures weaker than this are silently dropped)"
+            depends on IOHOMECONTROL_SX1262_DIAG_SNIFFER
+            range -130 0
+            default -85
+            help
+                In sniffer mode the chip will fire RX_DONE on pure noise (~10-30 times per second)
+                because we force a 1-byte sync match. Each capture is 240 bytes which costs ~70 ms
+                of UART time at 115200 baud and would saturate the console + starve other tasks
+                of the radio mutex. This threshold suppresses the hex dump (and the matching
+                "RX_DONE: ..." header line) when the reported RSSI is below it. Real IO-Home /
+                Somfy IO / evohome traffic typically arrives well above -85 dBm; lower this if
+                you are listening to a far-away transmitter, raise it if you only care about
+                strong local frames. Set to -130 to log everything.
+
+        config IOHOMECONTROL_SX1262_DIAG_SNIFFER_HOP_MS
+            int "[DEBUG] Sniffer dwell time per channel (ms, 0 = pin to channel 2)"
+            depends on IOHOMECONTROL_SX1262_DIAG_SNIFFER
+            range 0 60000
+            default 1000
+            help
+                In sniffer mode the IO-Homecontrol stack still rotates between the three 868 MHz
+                channels (868.25 / 868.95 / 869.85 MHz). The default IO-Home hop period of 2.7 ms
+                is way too aggressive for continuous 240-byte captures and causes the radio mutex
+                to be hammered, which in turn causes "SetFrequency - No mutex available!" spam
+                and eventually a stuck RX state. Use 0 to disable hopping entirely (the radio
+                stays on whatever channel IoHomeControl initialised - 868.95 MHz). Use 1000 ms
+                or more for slow, predictable rotation that gives the sniffer plenty of time to
+                capture multiple bursts on each channel.
 
         config IOHOMECONTROL_SX1262_TXEN
             int "TX_EN GPIO Num"

