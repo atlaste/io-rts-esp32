@@ -28,7 +28,7 @@
 static const char *TAG = "io-hctrl";
 
 constexpr TickType_t MUTEX_MAX_WAIT_TICKS = 30000 * portTICK_PERIOD_MS;                     // 30 seconds
-constexpr TickType_t RECEIVED_IO_TREATMENT_WAIT_TICKS = 500 * portTICK_PERIOD_MS;           // 500 ms
+constexpr TickType_t RECEIVED_IO_TREATMENT_WAIT_TICKS = 1000 * portTICK_PERIOD_MS;          // 1000 ms
 constexpr TickType_t RECEIVED_IO_DISCOVERY_RESPONSE_WAIT_TICKS = 2000 * portTICK_PERIOD_MS; // 2s, I have seen devices between 1s and 1.5s!
 
 constexpr TickType_t UPDATE_STATUS_WAKEUP_INTERVAL_MS = 1000; // 1 second
@@ -1479,7 +1479,11 @@ namespace iohome
       bool ret = false;
       UBaseType_t currentPriority = uxTaskPriorityGet(NULL);
       vTaskPrioritySet(NULL, IO_FRAME_PROCESSING_TASK); // change task priority to higher!
-      if (create_execute_request(request, mOwnNodeId, it->second.info.node_id, true, position, quiet) && SendAndReceive(request, response, FREQUENCY_CHANNEL_2))
+      // is_low_power=false: we are impersonating a Tahoma controller (line-powered), not a battery
+      // remote, so CTRL1 must NOT advertise the low-power bit. Captures of real Tahoma EXEC frames
+      // show CTRL1=0x00; sending CTRL1=0x20 (low-power) appears to make actuators silently ignore
+      // the command even when the rest of the frame and the HMAC are correct.
+      if (create_execute_request(request, mOwnNodeId, it->second.info.node_id, false, position, quiet) && SendAndReceive(request, response, FREQUENCY_CHANNEL_2))
       {
         UpdateDeviceStatus(response);
         ret = true;

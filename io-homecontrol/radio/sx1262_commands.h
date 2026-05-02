@@ -70,6 +70,15 @@ namespace RadioLinks
     constexpr uint8_t SX126X_STANDBY_RC                    = 0x00;
     constexpr uint8_t SX126X_STANDBY_XOSC                  = 0x01;
 
+    // SET_RX_TX_FALLBACK_MODE parameter values (SX126x datasheet table 13-2).
+    // Default after POR is SX126X_FALLBACK_STDBY_RC, which turns the TCXO off after every TX_DONE
+    // / RX_DONE. For latency-sensitive protocols (io-homecontrol, response windows of a few ms)
+    // we keep the crystal alive with SX126X_FALLBACK_STDBY_XOSC so that the next TX or RX can
+    // start immediately without waiting for the TCXO startup timer.
+    constexpr uint8_t SX126X_FALLBACK_FS                   = 0x40;
+    constexpr uint8_t SX126X_FALLBACK_STDBY_XOSC           = 0x30;
+    constexpr uint8_t SX126X_FALLBACK_STDBY_RC             = 0x20;
+
     constexpr uint8_t SX126X_PACKET_TYPE_GFSK              = 0x00;
     constexpr uint8_t SX126X_PACKET_TYPE_LORA              = 0x01;
 

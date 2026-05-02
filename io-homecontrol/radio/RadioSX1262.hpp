@@ -180,6 +180,7 @@ namespace RadioLinks
         RADIO_ERRCODE setStandby(uint8_t mode);
         RADIO_ERRCODE setPacketType(uint8_t type);
         RADIO_ERRCODE setRegulatorMode(uint8_t mode);
+        RADIO_ERRCODE setRxTxFallbackMode(uint8_t fallbackMode);
         RADIO_ERRCODE setDio2AsRfSwitchCtrl(bool enable);
         RADIO_ERRCODE setDio3AsTcxoCtrl(uint8_t voltage, uint32_t delay_us);
         RADIO_ERRCODE calibrate(uint8_t calibParam);

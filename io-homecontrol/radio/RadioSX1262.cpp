@@ -382,7 +382,11 @@ namespace RadioLinks
         // On boards like the DFRobot ESP32-S3 LoRaWAN the antenna is otherwise left
         // disconnected for ~1 ms after setRx(), which is more than enough to miss the
         // start of a short-preamble io-homecontrol response frame.
-        RADIO_ERRCODE err = setStandby(SX126X_STANDBY_RC);
+        // 
+        // Use STDBY_XOSC (not STDBY_RC) so the TCXO stays alive across the standby->RX flip;
+        // dropping to STDBY_RC would force a TCXO+PLL warm-up at the start of the next RX
+        // window and we would miss the first few ms of actuator/controller replies.
+        RADIO_ERRCODE err = setStandby(SX126X_STANDBY_XOSC);
         if (err == RADIO_ERR_NONE)
             err = applyPacketParams(mPreambleLenBits, RX_FIXED_LEN);
         if (err == RADIO_ERR_NONE)
@@ -424,7 +428,9 @@ namespace RadioLinks
             ESP_LOGE(TAG, "StopReceive - No mutex available!");
             return RADIO_ERR_BUSY;
         }
-        RADIO_ERRCODE err = setStandby(SX126X_STANDBY_RC);
+        // STDBY_XOSC keeps the TCXO running so the next StartReceive() / Send() does not pay the
+        // crystal warm-up cost.
+        RADIO_ERRCODE err = setStandby(SX126X_STANDBY_XOSC);
         setRfSwitch(false, false);
         xSemaphoreGive(s1262Mutex);
         if (err == RADIO_ERR_NONE)
@@ -480,8 +486,11 @@ namespace RadioLinks
 
         // Stop everything, switch to the requested frequency, re-arm packet parameters with the exact tx length.
         // Park the RF switch while reconfiguring; flip to TX right before setTx.
+        // Use STDBY_XOSC instead of STDBY_RC so the TCXO stays running while we reconfigure - the
+        // PLL re-locks to the new frequency without having to wait for the crystal to start again,
+        // which keeps frequency hopping snappy and avoids missing immediate replies after TX_DONE.
         setRfSwitch(false, false);
-        RADIO_ERRCODE err = setStandby(SX126X_STANDBY_RC);
+        RADIO_ERRCODE err = setStandby(SX126X_STANDBY_XOSC);
         if (err == RADIO_ERR_NONE && mCurrentFrequency != frequency)
         {
             uint64_t frf = (static_cast<uint64_t>(frequency) << 25) / SX126X_FXOSC;
@@ -884,7 +893,8 @@ namespace RadioLinks
             }
             else
             {
-                setStandby(SX126X_STANDBY_RC);
+                // Park in STDBY_XOSC so the next TX/RX does not have to wait for TCXO startup.
+                setStandby(SX126X_STANDBY_XOSC);
                 xSemaphoreGive(s1262Mutex);
             }
             return;
@@ -1032,6 +1042,11 @@ namespace RadioLinks
     RADIO_ERRCODE RadioSX1262::setRegulatorMode(uint8_t mode)
     {
         return sendCommand(SX126X_CMD_SET_REGULATOR_MODE, &mode, 1);
+    }
+
+    RADIO_ERRCODE RadioSX1262::setRxTxFallbackMode(uint8_t fallbackMode)
+    {
+        return sendCommand(SX126X_CMD_SET_RX_TX_FALLBACK_MODE, &fallbackMode, 1);
     }
 
     RADIO_ERRCODE RadioSX1262::setDio2AsRfSwitchCtrl(bool enable)
@@ -1280,6 +1295,14 @@ namespace RadioLinks
 
         // DC-DC regulator if available - safer default for SX1262 modules
         setRegulatorMode(SX126X_REGULATOR_DC_DC);
+
+        // Keep the crystal alive after every TX_DONE / RX_DONE instead of falling back to STDBY_RC
+        // (the chip's POR default). io-homecontrol response windows are only a few ms, well below
+        // the TCXO startup time we configure for cold-start - if the chip dropped to STDBY_RC after
+        // each TX it would have to re-warm the TCXO and relock the PLL on every TX->RX flip, which
+        // wipes out the start of the actuator's reply. STDBY_XOSC also matches what laberning's
+        // working SX1262 driver does (SET_RX_TX_FALLBACK_MODE = 0x30).
+        setRxTxFallbackMode(SX126X_FALLBACK_STDBY_XOSC);
 
         // Default packet type GFSK; the IoHomeControl layer will call SetModulation(FSK) which is a no-op since we are already there.
         setPacketType(SX126X_PACKET_TYPE_GFSK);
