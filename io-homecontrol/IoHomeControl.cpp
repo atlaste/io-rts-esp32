@@ -1175,8 +1175,8 @@ namespace iohome
         IO_LOGI("  Controller (Tahoma) node_id : {}", controllerHex);
         IO_LOGI("  Recovered system_key        : {}", systemKeyHex);
         IO_LOGI("  Copy these into your sdkconfig:");
-        IO_LOGI("    CONFIG_IOHOMECONTROL_OWN_NODE_ID=\"{}\"", controllerHex);
-        IO_LOGI("    CONFIG_IOHOMECONTROL_SYSTEM_KEY=\"{}\"", systemKeyHex);
+        IO_LOGI("    CONFIG_IOHOMECONTROL_DEFAULT_NODEID=\"{}\"", controllerHex);
+        IO_LOGI("    CONFIG_IOHOMECONTROL_DEFAULT_KEY=\"{}\"", systemKeyHex);
         IO_LOGI("===========================================================");
         ESP_LOGW(TAG, "===== STEAL SUCCESS =====");
         ESP_LOGW(TAG, "controller node_id : %s", controllerHex.c_str());
