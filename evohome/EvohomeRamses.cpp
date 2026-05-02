@@ -247,27 +247,133 @@ namespace evohome
         // raw / UART / Manchester dumps are only emitted on failure (or
         // when the user explicitly turns on verbose mode for radio
         // debugging).
-        bool decoded = false;
+        ParseStatus status = ParseStatus::TooShort;
+        int  sum_residual  = 0;
+        bool decoded       = false;
         if (proto_len > 0)
-            decoded = DecodeAndDispatch({mProtoBuf, proto_len}, freq, rssi);
+            decoded = DecodeAndDispatch({mProtoBuf, proto_len}, freq, rssi,
+                                        &status, &sum_residual);
 
-        if (!decoded)
-        {
-            if (uart_len < 2 || proto_len == 0) ++mStats.manchester_failures;
-            else                                ++mStats.framing_failures;
-        }
+        if (!decoded) AccountFailure(status, {mProtoBuf, proto_len}, uart_len);
 
         if (mDumpRaw.load() || !decoded)
         {
             DumpStages(raw, len, freq, rssi,
                        uart_len, best_offset,
                        proto_len, invalid_at);
-            if (!decoded && proto_len > 0)
-                ESP_LOGI(TAG,
-                    "RX RSSI=%.1f dBm: frame parse / csum failed (%u bytes)",
-                    static_cast<double>(rssi),
-                    static_cast<unsigned>(proto_len));
+            if (!decoded)
+            {
+                LogFailureSummary(rssi, status, sum_residual,
+                                  {mProtoBuf, proto_len},
+                                  uart_len, invalid_at);
+            }
         }
+    }
+
+    void EvohomeRamses::AccountFailure(ParseStatus status,
+                                       std::span<const uint8_t> proto_bytes,
+                                       size_t /*uart_len*/)
+    {
+        // Split the "too short" / "length mismatch" cases by *who* is at
+        // fault: if the truncated frame's own length byte tells us we
+        // should have had more bytes, the Manchester decoder bailed
+        // mid-frame (radio bit error). Otherwise the frame is just
+        // structurally short or the length byte lies.
+        switch (status)
+        {
+            case ParseStatus::Ok:
+                break;
+            case ParseStatus::TooShort:
+                ++mStats.manc_too_short;
+                break;
+            case ParseStatus::HeaderReservedBits:
+                ++mStats.header_reserved;
+                break;
+            case ParseStatus::AddressTruncated:
+            case ParseStatus::ParamTruncated:
+            case ParseStatus::OpcodeTruncated:
+            case ParseStatus::LengthTruncated:
+                // We never even reached the length byte, so we can't tell
+                // whether it would have demanded more - blame Manchester.
+                ++mStats.manc_truncated;
+                break;
+            case ParseStatus::PayloadTooLong:
+            case ParseStatus::LengthMismatch:
+            {
+                // If we DO have the length byte, see whether the frame
+                // would have fit if Manchester hadn't bailed early.
+                // proto_bytes here is the truncated stream including the
+                // (already-decoded) length byte.
+                size_t pos = 1; // skip header
+                const uint8_t hdr = proto_bytes[0];
+                static constexpr uint8_t kAMask  = 0x0C;
+                static constexpr uint8_t kAShift = 2;
+                static constexpr uint8_t kP0     = 0x02;
+                static constexpr uint8_t kP1     = 0x01;
+                static const uint8_t addr_count[4] = {3, 1, 2, 2};
+                pos += addr_count[(hdr & kAMask) >> kAShift] * 3;
+                if (hdr & kP0) ++pos;
+                if (hdr & kP1) ++pos;
+                pos += 2; // opcode
+                if (pos < proto_bytes.size())
+                {
+                    const size_t need = 1 + proto_bytes[pos] + 1; // len byte + payload + csum
+                    const size_t have = proto_bytes.size() - pos;
+                    if (need > have) { ++mStats.manc_truncated; break; }
+                }
+                ++mStats.length_mismatch;
+                break;
+            }
+            case ParseStatus::BadChecksum:
+                ++mStats.bad_checksum;
+                break;
+        }
+    }
+
+    void EvohomeRamses::LogFailureSummary(float rssi, ParseStatus status,
+                                          int sum_residual,
+                                          std::span<const uint8_t> proto_bytes,
+                                          size_t uart_len, size_t invalid_at)
+    {
+        // One-liner that says exactly which gate the frame failed at, plus
+        // any numbers that distinguish "single-bit radio error" (the
+        // dominant case in practice) from a real codec/structural bug.
+        char extra[96] = {0};
+        switch (status)
+        {
+            case ParseStatus::Ok:
+                break;
+            case ParseStatus::HeaderReservedBits:
+                std::snprintf(extra, sizeof(extra),
+                    " header=0x%02X (bits 6/7 are RAMSES-reserved=0)",
+                    proto_bytes.empty() ? 0u : static_cast<unsigned>(proto_bytes[0]));
+                break;
+            case ParseStatus::BadChecksum:
+                std::snprintf(extra, sizeof(extra),
+                    " sum=0x%02X (off by %d, single bit error)",
+                    static_cast<unsigned>(sum_residual & 0xFF),
+                    sum_residual);
+                break;
+            case ParseStatus::TooShort:
+            case ParseStatus::AddressTruncated:
+            case ParseStatus::ParamTruncated:
+            case ParseStatus::OpcodeTruncated:
+            case ParseStatus::LengthTruncated:
+            case ParseStatus::PayloadTooLong:
+            case ParseStatus::LengthMismatch:
+                std::snprintf(extra, sizeof(extra),
+                    " manc_stop_at=%u/%u",
+                    static_cast<unsigned>(invalid_at),
+                    static_cast<unsigned>(uart_len));
+                break;
+        }
+
+        ESP_LOGI(TAG,
+            "RX RSSI=%.1f dBm: frame %s (%u proto bytes)%s",
+            static_cast<double>(rssi),
+            to_string(status),
+            static_cast<unsigned>(proto_bytes.size()),
+            extra);
     }
 
     void EvohomeRamses::DumpStages(const uint8_t *raw, size_t raw_len,
@@ -300,11 +406,17 @@ namespace evohome
     }
 
     bool EvohomeRamses::DecodeAndDispatch(std::span<const uint8_t> proto_bytes,
-                                          uint32_t freq, float rssi)
+                                          uint32_t freq, float rssi,
+                                          ParseStatus *out_status,
+                                          int         *out_sum_residual)
     {
-        auto frame = parse_frame(proto_bytes);
-        if (!frame) return false;
+        auto result = parse_frame(proto_bytes);
+        if (out_status)       *out_status       = result.status;
+        if (out_sum_residual) *out_sum_residual = result.sum_residual;
+        if (result.status != ParseStatus::Ok || !result.frame) return false;
 
+        const Frame &frameRef = *result.frame;
+        const Frame *frame    = &frameRef;
         ++mStats.frames_decoded;
 
         // Boot-relative timestamp, since the device usually has no NTP/RTC

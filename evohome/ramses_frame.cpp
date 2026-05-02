@@ -67,17 +67,53 @@ namespace evohome
         return static_cast<uint8_t>(-static_cast<int>(s) & 0xFF);
     }
 
-    std::optional<Frame> parse_frame(std::span<const uint8_t> data)
+    const char *to_string(ParseStatus s)
     {
+        switch (s)
+        {
+            case ParseStatus::Ok:                  return "ok";
+            case ParseStatus::TooShort:            return "too-short";
+            case ParseStatus::HeaderReservedBits:  return "header-reserved-bits";
+            case ParseStatus::AddressTruncated:    return "addr-truncated";
+            case ParseStatus::ParamTruncated:      return "param-truncated";
+            case ParseStatus::OpcodeTruncated:     return "opcode-truncated";
+            case ParseStatus::LengthTruncated:     return "length-truncated";
+            case ParseStatus::PayloadTooLong:      return "payload-too-long";
+            case ParseStatus::LengthMismatch:      return "length-mismatch";
+            case ParseStatus::BadChecksum:         return "bad-checksum";
+        }
+        return "?";
+    }
+
+    // Bits 6 and 7 of the header are RAMSES-reserved and always 0 in valid
+    // traffic (see header bit layout comment in ramses_frame.h). When
+    // they're set in a captured frame it is by far most likely a single-bit
+    // demodulator error on the very first decoded byte - we see it
+    // constantly on weak signals.
+    static constexpr uint8_t kHdrReservedMask = 0xC0;
+
+    ParseResult parse_frame(std::span<const uint8_t> data)
+    {
+        ParseResult r;
+
         // Minimum valid frame: header(1) + at least one addr(3) + opcode(2)
         //                    + len(1) + payload(0) + csum(1) = 8 bytes.
-        if (data.size() < 8) return std::nullopt;
+        if (data.size() < 8)
+        {
+            r.status = ParseStatus::TooShort;
+            return r;
+        }
 
-        // Verify checksum first - it is cheap and a wrong CSUM means there is
-        // no point spending cycles parsing the rest.
-        uint8_t total = 0;
-        for (uint8_t b : data) total = static_cast<uint8_t>(total + b);
-        if (total != 0) return std::nullopt;
+        r.header_byte = data[0];
+
+        // Cheap sanity check before structural parse: reserved bits must be
+        // zero. Catches the very common "bit error in first decoded byte"
+        // case before we waste cycles further down.
+        if (r.header_byte & kHdrReservedMask)
+        {
+            r.status = ParseStatus::HeaderReservedBits;
+            return r;
+        }
 
         Frame f;
         const uint8_t *p   = data.data();
@@ -94,7 +130,7 @@ namespace evohome
             f.has_addr[i] = present[i];
             if (present[i])
             {
-                if (p + 3 > end) return std::nullopt;
+                if (p + 3 > end) { r.status = ParseStatus::AddressTruncated; return r; }
                 uint8_t buf[3] = {p[0], p[1], p[2]};
                 f.addr[i] = DeviceAddr::from_wire(buf);
                 p += 3;
@@ -107,26 +143,43 @@ namespace evohome
 
         if (f.header_byte & kHdrParam0)
         {
-            if (p >= end) return std::nullopt;
+            if (p >= end) { r.status = ParseStatus::ParamTruncated; return r; }
             f.param0 = *p++;
         }
         if (f.header_byte & kHdrParam1)
         {
-            if (p >= end) return std::nullopt;
+            if (p >= end) { r.status = ParseStatus::ParamTruncated; return r; }
             f.param1 = *p++;
         }
 
-        if (p + 2 > end) return std::nullopt;
+        if (p + 2 > end) { r.status = ParseStatus::OpcodeTruncated; return r; }
         f.opcode = static_cast<uint16_t>((p[0] << 8) | p[1]);
         p += 2;
 
-        if (p >= end) return std::nullopt;
+        if (p >= end) { r.status = ParseStatus::LengthTruncated; return r; }
         f.payload_len = *p++;
-        if (f.payload_len > kMaxFramePayload) return std::nullopt;
-        if (p + f.payload_len != end) return std::nullopt; // payload must fit exactly
+        r.length_byte = f.payload_len;
+        if (f.payload_len > kMaxFramePayload) { r.status = ParseStatus::PayloadTooLong; return r; }
+        if (p + f.payload_len != end)         { r.status = ParseStatus::LengthMismatch;  return r; }
         std::memcpy(f.payload.data(), p, f.payload_len);
 
-        return f;
+        // Structural parse succeeded - now verify the checksum. We do this
+        // last (rather than up-front) so that on failure we can tell the
+        // user "bytes look like a frame, but checksum is off by N" - that
+        // directly distinguishes "single-bit error in the payload" from
+        // "we parsed the structure wrong".
+        uint8_t total = 0;
+        for (uint8_t b : data) total = static_cast<uint8_t>(total + b);
+        if (total != 0)
+        {
+            r.status = ParseStatus::BadChecksum;
+            r.sum_residual = static_cast<int>(total);
+            return r;
+        }
+
+        r.frame  = f;
+        r.status = ParseStatus::Ok;
+        return r;
     }
 
     size_t serialize_frame(const Frame &f, std::span<uint8_t> out)

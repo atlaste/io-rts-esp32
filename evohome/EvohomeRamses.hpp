@@ -72,16 +72,35 @@ namespace evohome
 {
 
     /// @brief Statistics surfaced through the CLI / MQTT for monitoring the
-    ///        sniffer health.
+    ///        sniffer health. Failure counters are split by category so the
+    ///        user can tell radio-layer noise (the dominant case in
+    ///        practice) from a real codec/structural bug.
     struct SnifferStats
     {
         uint64_t raw_bursts          = 0;  ///< RX_DONE callbacks from radio
-        uint64_t sync_misses         = 0;  ///< no RAMSES sync header in the chip capture
-        uint64_t manchester_failures = 0;  ///< sync OK, Manchester decode failed
-        uint64_t framing_failures    = 0;  ///< Manchester OK, frame parse / csum failed
         uint64_t frames_decoded      = 0;  ///< complete + checksum-valid frames
         uint64_t codec_hits          = 0;  ///< frames whose (code,verb) had a registered codec
         uint64_t codec_misses        = 0;  ///< frames whose codec was missing
+
+        // ---- failure categories ----
+        // Manchester-layer (chip stream) issues: the demod produced too few
+        // bytes, OR bailed mid-stream on an invalid Manchester pair before
+        // we got enough data for even a minimal frame. Both are bit
+        // errors at the radio layer.
+        uint64_t manc_too_short      = 0;  ///< Manchester output < 8 bytes
+        uint64_t manc_truncated      = 0;  ///< Manchester bailed and the
+                                           ///  truncated frame's `length`
+                                           ///  byte says we should have
+                                           ///  more bytes than we got
+
+        // Frame-layer issues, bucketed by where parsing tripped:
+        uint64_t header_reserved     = 0;  ///< header bits 6/7 set (bit error
+                                           ///  in the very first decoded byte)
+        uint64_t struct_truncated    = 0;  ///< addrs/params/opcode/length
+                                           ///  ran off the end of the buffer
+        uint64_t length_mismatch     = 0;  ///< length byte != remaining bytes
+        uint64_t bad_checksum        = 0;  ///< structurally fine, sum != 0
+                                           ///  (single-bit error in payload)
     };
 
     class EvohomeRamses
@@ -159,7 +178,26 @@ namespace evohome
 
         // Hot-path internals
         bool DecodeAndDispatch(std::span<const uint8_t> proto_bytes,
-                               uint32_t freq, float rssi);
+                               uint32_t freq, float rssi,
+                               ParseStatus *out_status      = nullptr,
+                               int         *out_sum_residual = nullptr);
+
+        /// @brief Bump the right SnifferStats counter for a parse failure.
+        ///        For length-related statuses, peeks at the truncated
+        ///        proto bytes to decide whether the Manchester decoder
+        ///        bailed mid-frame (a radio bit error) or the frame is
+        ///        actually malformed.
+        void AccountFailure(ParseStatus status,
+                            std::span<const uint8_t> proto_bytes,
+                            size_t uart_len);
+
+        /// @brief One-line failure summary log, with category and any
+        ///        diagnostic numbers (sum-distance for checksum failures,
+        ///        manchester stop position for truncations, ...).
+        void LogFailureSummary(float rssi, ParseStatus status,
+                               int sum_residual,
+                               std::span<const uint8_t> proto_bytes,
+                               size_t uart_len, size_t invalid_at);
 
         /// @brief Emit the raw / UART / Manchester triage lines using the
         ///        current contents of mUartBuf / mProtoBuf. Used both by

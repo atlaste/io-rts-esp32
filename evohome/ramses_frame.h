@@ -91,15 +91,50 @@ namespace evohome
         void describe_friendly(std::ostream &os) const;
     };
 
+    /// @brief Why a frame parse failed, in enough detail that the caller can
+    ///        tell radio-layer noise (the dominant case in practice) from a
+    ///        real codec/structural bug.
+    enum class ParseStatus : uint8_t
+    {
+        Ok = 0,                ///< parsed and checksum valid
+        TooShort,              ///< < 8 bytes, can't even hold a minimal frame
+        HeaderReservedBits,    ///< header bits 6/7 are RAMSES "reserved-zero"
+                               ///  but are set; almost always a bit error
+                               ///  on the very first decoded byte
+        AddressTruncated,      ///< header demands more address bytes than we have
+        ParamTruncated,        ///< param0/param1 byte indicated by header but missing
+        OpcodeTruncated,       ///< not enough bytes left for opcode after addrs/params
+        LengthTruncated,       ///< not enough bytes left for length byte
+        PayloadTooLong,        ///< length > kMaxFramePayload (would overflow our buffer)
+        LengthMismatch,        ///< length doesn't match remaining-bytes count
+        BadChecksum,           ///< structurally fine, but byte-sum != 0
+    };
+
+    /// @brief Human-readable name for a ParseStatus (short, log-friendly).
+    const char *to_string(ParseStatus s);
+
+    /// @brief Result of a frame-parse attempt: success/failure status, the
+    ///        Frame on success, plus a few diagnostic numbers callers can
+    ///        log to help triage failures.
+    struct ParseResult
+    {
+        ParseStatus            status = ParseStatus::TooShort;
+        std::optional<Frame>   frame;          ///< populated only if status == Ok
+        uint8_t                header_byte = 0;
+        uint8_t                length_byte = 0;
+        int                    sum_residual = 0;  ///< for BadChecksum: byte-sum mod 256 (1..255)
+    };
+
     /// @brief Parse a fully-decoded protocol-level byte stream into a Frame.
-    ///        @p data must start at the header byte and end at (but not
-    ///        include) the trailer byte; the checksum byte is the LAST byte
-    ///        of @p data and is verified by this function.
+    ///        @p data must start at the header byte and end at the checksum
+    ///        byte (which IS verified by this function).
     ///
-    /// @return std::nullopt on any structural / checksum error. On success,
-    ///         the returned Frame's payload span is valid for the lifetime
-    ///         of the Frame itself.
-    std::optional<Frame> parse_frame(std::span<const uint8_t> data);
+    ///        Returns a ParseResult with status==Ok plus the populated
+    ///        frame on success, or a non-Ok status (and as much partial
+    ///        diagnostic info as we managed to extract before bailing out)
+    ///        on failure. The returned Frame's payload span is valid for
+    ///        the lifetime of the Frame itself.
+    ParseResult parse_frame(std::span<const uint8_t> data);
 
     /// @brief Compute the RAMSES checksum over @p data: returns
     ///        (-(sum of bytes)) mod 256. Adding this byte to @p data makes

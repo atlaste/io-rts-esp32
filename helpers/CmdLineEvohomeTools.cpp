@@ -102,11 +102,20 @@ static int do_evstatus_cmd(int /*argc*/, char ** /*argv*/)
     const auto &s = sEvohome->Stats();
     printf("evohome: state=%s\n", sEvohome->IsSniffing() ? "SNIFFING" : "OFF");
     printf("  raw_bursts          = %llu\n", (unsigned long long)s.raw_bursts);
-    printf("  manchester_failures = %llu\n", (unsigned long long)s.manchester_failures);
-    printf("  framing_failures    = %llu\n", (unsigned long long)s.framing_failures);
     printf("  frames_decoded      = %llu\n", (unsigned long long)s.frames_decoded);
     printf("  codec_hits          = %llu\n", (unsigned long long)s.codec_hits);
     printf("  codec_misses        = %llu\n", (unsigned long long)s.codec_misses);
+    printf("  failures by category:\n");
+    printf("    manc_too_short    = %llu  (Manchester output < 8 bytes - severe noise)\n",
+           (unsigned long long)s.manc_too_short);
+    printf("    manc_truncated    = %llu  (Manchester bailed mid-frame - radio bit error)\n",
+           (unsigned long long)s.manc_truncated);
+    printf("    header_reserved   = %llu  (header bits 6/7 set - bit error in first byte)\n",
+           (unsigned long long)s.header_reserved);
+    printf("    length_mismatch   = %llu  (length byte != bytes left after header)\n",
+           (unsigned long long)s.length_mismatch);
+    printf("    bad_checksum      = %llu  (structurally fine, sum != 0 - bit error in payload)\n",
+           (unsigned long long)s.bad_checksum);
     auto &reg = evohome::global_codec_registry();
     printf("registry: %u codec(s)\n", static_cast<unsigned>(reg.size()));
     return 0;
