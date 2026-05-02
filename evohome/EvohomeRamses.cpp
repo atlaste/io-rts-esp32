@@ -214,22 +214,6 @@ namespace evohome
         // mHexBuf) - this hot path runs on the radio GPIO task whose
         // stack is only 4 KB.
 
-        // Raw chip dump: capture the full FIFO contents BEFORE any
-        // interpretation. This is the ground truth for debugging - any
-        // protocol bug in our UART / Manchester / frame / codec layers
-        // can be diagnosed by reading the dumped bytes here against the
-        // on-air wire format. Rate-limited only by the inter-burst gap.
-        if (mDumpRaw.load())
-        {
-            const size_t shown = hex_dump(raw, len, mHexBuf, sizeof(mHexBuf));
-            ESP_LOGI(TAG, "RX raw  RSSI=%.1f dBm freq=%lu len=%u/%u: %s",
-                     static_cast<double>(rssi),
-                     static_cast<unsigned long>(freq),
-                     static_cast<unsigned>(shown),
-                     static_cast<unsigned>(len),
-                     mHexBuf);
-        }
-
         // Step 1 of 2: UART de-frame.
         //
         // The captured `raw` is a packed bit stream (MSB-first per byte).
@@ -241,60 +225,77 @@ namespace evohome
         const size_t uart_len = uart::decode_best(
             {raw, len}, {mUartBuf, sizeof(mUartBuf)}, &best_offset);
 
-        if (mDumpRaw.load())
-        {
-            hex_dump(mUartBuf, uart_len, mHexBuf, sizeof(mHexBuf));
-            ESP_LOGI(TAG, "RX uart bit_off=%u len=%u: %s",
-                     static_cast<unsigned>(best_offset),
-                     static_cast<unsigned>(uart_len),
-                     mHexBuf);
-        }
-
-        if (uart_len < 2)
-        {
-            ++mStats.manchester_failures;
-            return;
-        }
-
         // The first protocol byte we decoded is the trailing 0x53 of the
         // RAMSES sync (we deliberately left it out of the chip-level
         // sync to keep that exactly 40 bits). Skip it; the rest is the
         // Manchester-encoded message proper.
-        size_t skip = 0;
-        if (mUartBuf[0] == 0x53) skip = 1;
+        const size_t skip = (uart_len >= 1 && mUartBuf[0] == 0x53) ? 1u : 0u;
 
         // Step 2 of 2: Manchester decode the remaining UART-decoded
         // bytes. Stops at the 0x35 trailer (which is not a valid
         // Manchester code so the decoder returns when it sees it).
         size_t invalid_at = 0;
-        const size_t proto_len = manchester::decode(
-            {mUartBuf + skip, uart_len - skip},
-            {mProtoBuf, sizeof(mProtoBuf)},
-            &invalid_at);
+        const size_t proto_len = (uart_len >= 2)
+            ? manchester::decode(
+                {mUartBuf + skip, uart_len - skip},
+                {mProtoBuf, sizeof(mProtoBuf)},
+                &invalid_at)
+            : 0u;
 
-        if (mDumpRaw.load())
+        // Decide what to log. We want clean log output when everything
+        // works, and full triage information when it doesn't, so the
+        // raw / UART / Manchester dumps are only emitted on failure (or
+        // when the user explicitly turns on verbose mode for radio
+        // debugging).
+        bool decoded = false;
+        if (proto_len > 0)
+            decoded = DecodeAndDispatch({mProtoBuf, proto_len}, freq, rssi);
+
+        if (!decoded)
+        {
+            if (uart_len < 2 || proto_len == 0) ++mStats.manchester_failures;
+            else                                ++mStats.framing_failures;
+        }
+
+        if (mDumpRaw.load() || !decoded)
+        {
+            DumpStages(raw, len, freq, rssi,
+                       uart_len, best_offset,
+                       proto_len, invalid_at);
+            if (!decoded && proto_len > 0)
+                ESP_LOGI(TAG,
+                    "RX RSSI=%.1f dBm: frame parse / csum failed (%u bytes)",
+                    static_cast<double>(rssi),
+                    static_cast<unsigned>(proto_len));
+        }
+    }
+
+    void EvohomeRamses::DumpStages(const uint8_t *raw, size_t raw_len,
+                                   uint32_t freq, float rssi,
+                                   size_t uart_len, size_t bit_offset,
+                                   size_t proto_len, size_t invalid_at)
+    {
+        const size_t shown = hex_dump(raw, raw_len, mHexBuf, sizeof(mHexBuf));
+        ESP_LOGI(TAG, "RX raw  RSSI=%.1f dBm freq=%lu len=%u/%u: %s",
+                 static_cast<double>(rssi),
+                 static_cast<unsigned long>(freq),
+                 static_cast<unsigned>(shown),
+                 static_cast<unsigned>(raw_len),
+                 mHexBuf);
+
+        hex_dump(mUartBuf, uart_len, mHexBuf, sizeof(mHexBuf));
+        ESP_LOGI(TAG, "RX uart bit_off=%u len=%u: %s",
+                 static_cast<unsigned>(bit_offset),
+                 static_cast<unsigned>(uart_len),
+                 mHexBuf);
+
+        if (proto_len > 0)
         {
             hex_dump(mProtoBuf, proto_len, mHexBuf, sizeof(mHexBuf));
             ESP_LOGI(TAG, "RX manc len=%u (stop@uart=%u): %s",
                      static_cast<unsigned>(proto_len),
                      static_cast<unsigned>(invalid_at),
                      mHexBuf);
-        }
-
-        if (proto_len == 0)
-        {
-            ++mStats.manchester_failures;
-            return;
-        }
-
-        if (!DecodeAndDispatch({mProtoBuf, proto_len}, freq, rssi))
-        {
-            ++mStats.framing_failures;
-            // The "RX manc" line above already shows the bytes; just flag
-            // that the frame parser said no.
-            ESP_LOGI(TAG, "RX RSSI=%.1f dBm: frame parse / csum failed (%u bytes)",
-                     static_cast<double>(rssi),
-                     static_cast<unsigned>(proto_len));
         }
     }
 

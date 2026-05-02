@@ -120,12 +120,12 @@ namespace evohome
         ///        this alone.
         void SetRegistry(const CodecRegistry *reg) { mRegistry = reg; }
 
-        /// @brief Toggle raw RX dumps. When true, every chip-level capture
-        ///        is logged as hex (with the Manchester-decoded protocol
-        ///        bytes alongside, if decode succeeded) regardless of
-        ///        whether the frame parser is happy with it. Useful for
-        ///        reverse-engineering new codes or diagnosing radio issues
-        ///        when the dispatcher reports nothing.
+        /// @brief Toggle verbose raw RX dumps. When OFF (default) we only
+        ///        log the friendly decoded line for successful frames, and
+        ///        fall back to a full raw / UART / Manchester triage dump
+        ///        whenever decoding fails. When ON, every chip-level capture
+        ///        is logged in full alongside its decode - useful when
+        ///        reverse-engineering new codes or diagnosing radio issues.
         void SetDumpRaw(bool on) { mDumpRaw.store(on); }
         bool IsDumpingRaw() const { return mDumpRaw.load(); }
 
@@ -138,7 +138,11 @@ namespace evohome
         RadioLinks::RadioModule *mRadio  = nullptr;
         iohome::IoHomeControl   *mIoHome = nullptr;
         std::atomic<bool>        mActive{false};
-        std::atomic<bool>        mDumpRaw{true}; // ON by default during bring-up
+        // OFF by default: only the friendly decoded line is logged for
+        // successful frames; failures still trigger a full triage dump.
+        // Use `ev_dump_raw on` (or SetDumpRaw(true)) when you actively
+        // need to look at the raw chip bytes.
+        std::atomic<bool>        mDumpRaw{false};
 
         // Dispatch
         const CodecRegistry *mRegistry = nullptr;
@@ -156,6 +160,14 @@ namespace evohome
         // Hot-path internals
         bool DecodeAndDispatch(std::span<const uint8_t> proto_bytes,
                                uint32_t freq, float rssi);
+
+        /// @brief Emit the raw / UART / Manchester triage lines using the
+        ///        current contents of mUartBuf / mProtoBuf. Used both by
+        ///        verbose mode and by the failure path.
+        void DumpStages(const uint8_t *raw, size_t raw_len,
+                        uint32_t freq, float rssi,
+                        size_t uart_len, size_t bit_offset,
+                        size_t proto_len, size_t invalid_at);
 
         // Pre-allocated decode/log scratch buffers. They live as members
         // (not on the stack) because ProcessChipBytes() runs on the radio
