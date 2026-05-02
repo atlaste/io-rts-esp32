@@ -19,6 +19,37 @@ namespace iohome
   {
 
     // ============================================================================
+    // PSA Crypto lazy init
+    // ============================================================================
+    // Every PSA API (psa_generate_random, psa_import_key, psa_cipher_encrypt, ...)
+    // returns PSA_ERROR_BAD_STATE (-137) until psa_crypto_init() has been called
+    // once. We discovered this the hard way: io_stealkey advanced all the way to
+    // KEY_INIT_TRANSFER (0x31), then generate_challenge() shipped six zero bytes
+    // because psa_generate_random() failed silently with -137, and Tahoma kept
+    // resending 0x31 forever. Initialise on first use from any crypto helper.
+    static bool ensure_psa_initialized()
+    {
+      static bool sInitDone = false;
+      static bool sInitOk   = false;
+      if (sInitDone)
+      {
+        return sInitOk;
+      }
+      psa_status_t status = psa_crypto_init();
+      sInitDone = true;
+      if (status != PSA_SUCCESS)
+      {
+        ESP_LOGE(TAG, "psa_crypto_init() failed (%d) - all crypto operations will fail",
+                 (int)status);
+        sInitOk = false;
+        return false;
+      }
+      ESP_LOGI(TAG, "PSA crypto initialised");
+      sInitOk = true;
+      return true;
+    }
+
+    // ============================================================================
     // Checksum Functions (for IV construction)
     // ============================================================================
 
@@ -53,11 +84,17 @@ namespace iohome
 
     void generate_challenge(uint8_t challenge_out[HMAC_SIZE])
     {
+      if (!ensure_psa_initialized())
+      {
+        memset(challenge_out, 0, HMAC_SIZE);
+        return;
+      }
       // Generate random 6-byte challenge
       psa_status_t status = psa_generate_random(challenge_out, HMAC_SIZE);
       if (status != PSA_SUCCESS)
       {
         ESP_LOGE(TAG, "generate_challenge - Failed to generate random! (%d)", (int)status);
+        memset(challenge_out, 0, HMAC_SIZE);
       }
     }
 
@@ -107,6 +144,10 @@ namespace iohome
         const uint8_t key[AES_KEY_SIZE],
         uint8_t output[AES_BLOCK_SIZE])
     {
+      if (!ensure_psa_initialized())
+      {
+        return false;
+      }
       psa_status_t status;
       psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
       psa_algorithm_t alg = PSA_ALG_ECB_NO_PADDING;
@@ -140,6 +181,10 @@ namespace iohome
         const uint8_t key[AES_KEY_SIZE],
         uint8_t output[AES_BLOCK_SIZE])
     {
+      if (!ensure_psa_initialized())
+      {
+        return false;
+      }
       psa_status_t status;
       psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
       psa_algorithm_t alg = PSA_ALG_ECB_NO_PADDING;

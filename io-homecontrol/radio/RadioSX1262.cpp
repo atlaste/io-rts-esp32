@@ -12,7 +12,7 @@
 #include "esp_log.h"
 
 constexpr uint8_t  BOARD_READY_AFTER_POR_MS = 10;
-constexpr TickType_t MUTEX_MAX_WAIT_TICKS    = ((TickType_t)2 * portTICK_PERIOD_MS); // 2 ms - same value as SX1276 driver
+constexpr TickType_t MUTEX_MAX_WAIT_TICKS    = pdMS_TO_TICKS(50);
 
 static QueueHandle_t s1262GpioEvtQueue = nullptr; // queue containing GPIO triggered (uint32_t)
 static SemaphoreHandle_t s1262Mutex = nullptr;    // mutex used to protect access to device on SPI bus
@@ -151,17 +151,17 @@ namespace RadioLinks
                 mCurrentFrequency = frequency;
             return ret;
         }
-        // Rate-limit: in sniffer mode (or under heavy IRQ load) the iohome hop task can fire
-        // dozens of times per second and each failure used to print two lines (this one and
-        // the corresponding "Error: Frequency hopping failed" in IoHomeControl). The flood
-        // saturates the UART and helps starve the radio mutex even further.
+        // With MUTEX_MAX_WAIT_TICKS now at 50 ms, this branch is truly exceptional - it means
+        // the SPI bus has been continuously held for >50 ms, which would only happen during a
+        // real chip-level stall. Rate-limit very aggressively (one line per minute) so that if
+        // it does happen we still see a breadcrumb without flooding the UART.
         static int64_t  sLastNoMutexUs = 0;
         static uint32_t sNoMutexCount  = 0;
         int64_t now = esp_timer_get_time();
-        if ((now - sLastNoMutexUs) > 1000000)
+        if ((now - sLastNoMutexUs) > 60000000)
         {
-            ESP_LOGE(TAG, "SetFrequency - No mutex available! (+%u suppressed in last %lld ms)",
-                     (unsigned)sNoMutexCount, (long long)((now - sLastNoMutexUs) / 1000));
+            ESP_LOGW(TAG, "SetFrequency - mutex held >50ms (+%u suppressed in last %lld s)",
+                     (unsigned)sNoMutexCount, (long long)((now - sLastNoMutexUs) / 1000000));
             sLastNoMutexUs = now;
             sNoMutexCount = 0;
         }
@@ -539,19 +539,28 @@ namespace RadioLinks
 
     void RadioSX1262::handleDio1Irq()
     {
+        // CRITICAL: unlike the SX1276 (short pulse / re-trigger-friendly DIO0), the SX126x holds
+        // the DIO1 line HIGH until we send CLEAR_IRQ_STATUS. We register the GPIO pin for
+        // GPIO_INTR_POSEDGE, so a permanently-high line never produces another rising edge - if
+        // we ever return without clearing the IRQ, the radio stops generating interrupts entirely
+        // and RX is dead until the next reset. Therefore we must NEVER drop a DIO1 event on the
+        // floor: if MUTEX_MAX_WAIT_TICKS expires we requeue the GPIO event so the next loop
+        // iteration retries.
+        // The mutex is held by either:
+        //   - the iohome process_radio_task running SetFrequency (bounded by waitBusy <= ~50 ms)
+        //   - a Send/StartReceive/StopReceive call (bounded similarly)
+        // so MUTEX_MAX_WAIT_TICKS (50 ms) is comfortably above worst-case contention.
         if (!xSemaphoreTake(s1262Mutex, MUTEX_MAX_WAIT_TICKS))
         {
-            // Rate-limit: in sniffer mode several DIO1 lines can stack up while the previous
-            // IRQ is still flushing its hex dump over UART. Logging every one of them just
-            // makes the contention worse and the user already sees the symptom (no RX frames).
             static int64_t  sLastBusyLogUs = 0;
             static uint32_t sBusySuppressed = 0;
             int64_t now = esp_timer_get_time();
-            if ((now - sLastBusyLogUs) > 1000000)
+            if ((now - sLastBusyLogUs) > 60000000)
             {
-                ESP_LOGE(TAG, "ManageInterrupt - Busy (+%u suppressed in last %lld ms)",
+                ESP_LOGW(TAG, "ManageInterrupt - mutex held >%ums, requeueing (+%u suppressed in last %lld s)",
+                         (unsigned)pdTICKS_TO_MS(MUTEX_MAX_WAIT_TICKS),
                          (unsigned)sBusySuppressed,
-                         (long long)((now - sLastBusyLogUs) / 1000));
+                         (long long)((now - sLastBusyLogUs) / 1000000));
                 sLastBusyLogUs = now;
                 sBusySuppressed = 0;
             }
@@ -559,11 +568,19 @@ namespace RadioLinks
             {
                 sBusySuppressed++;
             }
+            // Requeue so we'll retry instead of leaving the chip's DIO1 line stuck high (which
+            // would prevent any future POSEDGE IRQ from firing).
+            uint32_t gpio = static_cast<uint32_t>(mIoDIO1);
+            (void)xQueueSend(s1262GpioEvtQueue, &gpio, 0);
+            // Yield briefly so the holder gets a chance to release before we spin around the
+            // gpio_task loop again.
+            vTaskDelay(pdMS_TO_TICKS(2));
             return;
         }
 
         uint16_t irqStatus = 0;
-        if (getIrqStatus(irqStatus) != RADIO_ERR_NONE)
+        bool getIrqOk = (getIrqStatus(irqStatus) == RADIO_ERR_NONE);
+        if (!getIrqOk)
         {
             xSemaphoreGive(s1262Mutex);
             ESP_LOGE(TAG, "ManageInterrupt - getIrqStatus failed");
@@ -592,29 +609,33 @@ namespace RadioLinks
         if ((irqStatus & ~kBenignSnifferMask) == 0)
             shouldLog = false;
 #endif
+
+        // Decide whether we will emit either of the two LOGI lines below, and snapshot whatever
+        // state they need, BEFORE we make a logging decision. The mutex must not be held while
+        // ESP_LOGI runs - the default ESP-IDF console writes block on the UART (~87 us/char at
+        // 115200 baud, so a 150-char line takes ~13 ms, and two stacked lines easily exceed
+        // MUTEX_MAX_WAIT_TICKS, starving the iohome hop task).
+        bool     logPreambleLine = false;
+        uint32_t logPreambleSuppressed = 0;
+        int64_t  logPreambleSinceMs    = 0;
+        uint32_t logPreambleStreak     = 0;
+        if (irqStatus & SX126X_IRQ_PREAMBLE_DETECTED)
+        {
+            mLastPreambleDetectedTime = esp_timer_get_time();
+            mPreambleDetectedFlag = true;
+        }
         if (isPreambleOnly)
         {
             sPreambleStreak++;
             int64_t now = esp_timer_get_time();
-            if ((now - sLastPreambleLogUs) > 1000000) // at most one preamble line per second
+            if ((now - sLastPreambleLogUs) > 1000000) // one heartbeat per 1s
             {
-                // Diagnostic: read the chip's instantaneous RSSI, chip mode, and re-read IRQ status to
-                // catch a SYNC bit that may have arrived between our first read and our clear (the
-                // chip continues demodulating while we run SPI).
-                float rssiNow = -255.0f;
-                getRssiInst(rssiNow);
-                uint8_t chipStatus = 0;
-                getStatus(chipStatus);
-                uint16_t irqAfter = 0;
-                getIrqStatus(irqAfter);
-                ESP_LOGI(TAG, "DIO1 IRQ 0x%04X PREAMBLE (+%u suppressed in last %lld ms, streak=%u, "
-                              "RSSI=%.1f dBm, chip=0x%02X mode=%s, irq_after_clear=0x%04X)",
-                         irqStatus, (unsigned)sSuppressedPreambles,
-                         (long long)((now - sLastPreambleLogUs) / 1000),
-                         (unsigned)sPreambleStreak, rssiNow,
-                         chipStatus, statusModeName(chipStatus), irqAfter);
-                sLastPreambleLogUs = now;
-                sSuppressedPreambles = 0;
+                logPreambleLine       = true;
+                logPreambleSuppressed = sSuppressedPreambles;
+                logPreambleSinceMs    = (now - sLastPreambleLogUs) / 1000;
+                logPreambleStreak     = sPreambleStreak;
+                sLastPreambleLogUs    = now;
+                sSuppressedPreambles  = 0;
             }
             else
             {
@@ -623,8 +644,25 @@ namespace RadioLinks
         }
         else
         {
-            // Anything other than preamble-only: reset the streak counter.
             sPreambleStreak = 0;
+        }
+
+        // RX_DONE / TX_DONE / TIMEOUT continue under the mutex (they need SPI access). All other
+        // paths (PREAMBLE-only, SYNC_WORD_VALID, header errors with no RX_DONE, ...) just need
+        // the IRQ-status read+clear we already did above, so release the mutex NOW and do the
+        // rest (logging, flag updates) with the bus free.
+        bool keepMutex = (irqStatus & (SX126X_IRQ_RX_DONE | SX126X_IRQ_TX_DONE | SX126X_IRQ_TIMEOUT)) != 0;
+        if (!keepMutex)
+        {
+            xSemaphoreGive(s1262Mutex);
+        }
+
+        if (logPreambleLine)
+        {
+            ESP_LOGI(TAG, "DIO1 IRQ 0x%04X PREAMBLE (+%u suppressed in last %lld s, streak=%u)",
+                     irqStatus, (unsigned)logPreambleSuppressed,
+                     (long long)(logPreambleSinceMs / 1000),
+                     (unsigned)logPreambleStreak);
         }
         if (shouldLog)
         {
@@ -642,10 +680,10 @@ namespace RadioLinks
                      (irqStatus & SX126X_IRQ_TIMEOUT)           ? " TIMEOUT"           : "");
         }
 
-        if (irqStatus & SX126X_IRQ_PREAMBLE_DETECTED)
+        if (!keepMutex)
         {
-            mLastPreambleDetectedTime = esp_timer_get_time();
-            mPreambleDetectedFlag = true;
+            // Mutex already released and all bookkeeping done.
+            return;
         }
 
         if (irqStatus & SX126X_IRQ_RX_DONE)
@@ -806,12 +844,12 @@ namespace RadioLinks
             // Restart receive automatically since IO-Homecontrol typically uses continuous listening.
             if (mIsReceiveMode)
             {
-                // Re-arming is the critical path: if we fail to take the mutex here, RX is OFF
-                // and stays off until the next button press / timer kick. Wait noticeably longer
-                // than the regular MUTEX_MAX_WAIT_TICKS (2 ms) to ride out a SetFrequency call
-                // from the hopping task in iohome.
-                const TickType_t kRearmWaitTicks = pdMS_TO_TICKS(50);
-                if (xSemaphoreTake(s1262Mutex, kRearmWaitTicks))
+                // Re-arming is the critical path: if we don't reacquire the mutex here we leave
+                // the chip in standby and RX is OFF until the next explicit StartReceive() call.
+                // The only competitor for the mutex right now is the iohome hop task running
+                // SetFrequency, which holds the mutex for ~1 ms; MUTEX_MAX_WAIT_TICKS (50 ms)
+                // is several orders of magnitude more than necessary.
+                if (xSemaphoreTake(s1262Mutex, MUTEX_MAX_WAIT_TICKS))
                 {
                     applyPacketParams(mPreambleLenBits, RX_FIXED_LEN);
                     clearIrqStatus(SX126X_IRQ_ALL);
@@ -823,20 +861,11 @@ namespace RadioLinks
                 }
                 else
                 {
-                    static int64_t  sLastReArmLogUs = 0;
-                    static uint32_t sReArmFailures  = 0;
-                    int64_t now = esp_timer_get_time();
-                    if ((now - sLastReArmLogUs) > 1000000)
-                    {
-                        ESP_LOGE(TAG, "RX_DONE post-processing - failed to re-acquire mutex, RX may be stalled (+%u in last %lld ms)",
-                                 (unsigned)sReArmFailures, (long long)((now - sLastReArmLogUs) / 1000));
-                        sLastReArmLogUs = now;
-                        sReArmFailures = 0;
-                    }
-                    else
-                    {
-                        sReArmFailures++;
-                    }
+                    // True stall - log loudly so the user notices. RX is now OFF; the upper
+                    // layer's next StartReceive() (e.g. on a button press or timer kick) will
+                    // recover us.
+                    ESP_LOGE(TAG, "RX_DONE re-arm: mutex held >%ums, RX is STALLED",
+                             (unsigned)pdTICKS_TO_MS(MUTEX_MAX_WAIT_TICKS));
                 }
             }
             // Reset preamble flag so the upper layer does not see a stale preamble after a packet

@@ -86,11 +86,25 @@ namespace RadioLinks
         static constexpr uint8_t IOHOME_CRC_LEN   = 2;
         // After UART encoding (10 chip bits per protocol byte), 34 protocol bytes expand to 43
         // chip bytes. RX_IOHOME_LEN is the fixed chip-level capture size we program into the SX126x
-        // packet engine. We round up to 32 to match laberning/home_io_control which empirically
-        // covers typical 23-25-byte protocol frames after UART expansion (ceil(25*10/8) = 32). The
-        // RX_DONE path always reads the full RX FIFO window (RX_BUFFER_READ_LEN) regardless, so we
-        // pick up any tail past the chip-reported boundary too.
-        static constexpr uint8_t RX_IOHOME_LEN       = 32;
+        // packet engine.
+        //
+        // *Must* be large enough to fit the longest legitimate IO-Homecontrol frame, otherwise the
+        // tail (including the CRC) is cut off and findUartFrame() can never validate it.
+        // - FRAME_MAX_SIZE      = 32 protocol bytes (header + max 23 data + 2 CRC)
+        // - UART expansion      = 32 * 10/8 = 40 chip bytes
+        // - chip-sync alignment = the SX126x sync detector locks 1-2 bits inside the protocol
+        //                        UART start bit, so add ~3 bytes of slack
+        // -> 48 chip bytes covers any valid frame.
+        //
+        // We previously used 32 (laberning/home_io_control's value). That worked for short frames
+        // like 0x28/0x29/0x2C/0x2D/0x31 (all under 12 protocol bytes) but truncated 0x32
+        // KEY_TRANSFER (27 protocol bytes -> ~36 chip bytes), which is exactly the frame the
+        // io_stealkey flow needs to capture the system key from. Symptom: Tahoma resends 0x31
+        // forever because every 0x32 it sends comes back as "no CRC-valid frame".
+        //
+        // Cost of the larger window: ~3 ms extra RX dwell at 38.4 kbps - negligible vs. the
+        // CHANNEL_HOP_TIME_US of 2.7 ms and CHANNEL_RESPONSE_START_TIME_US of 300 ms.
+        static constexpr uint8_t RX_IOHOME_LEN       = 48;
         static constexpr uint8_t RX_BUFFER_READ_LEN  = 64;  // always read 64 chip bytes from FIFO
         static constexpr uint8_t RX_SNIFFER_LEN      = 240; // ~50 ms of air at 38.4 kbps GFSK
 #ifdef CONFIG_IOHOMECONTROL_SX1262_DIAG_SNIFFER

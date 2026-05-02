@@ -325,7 +325,19 @@ namespace iohome
           }
           else // if (!is_start(item.frame)) // Wait for a response
           {
-            waitTime = CHANNEL_RESPONSE_TIME_US * portTICK_PERIOD_MS / 1000;
+            // Continuation frame: we expect an answer back. Use the same long dwell as start
+            // frames (300 ms) instead of the short 50 ms. Reasoning:
+            //   - For mid-session frames like 0x2D (DISCOVER_CONFIRMATION_ACK) and 0x3C
+            //     (CHALLENGE_REQUEST), the controller has to do real work (AES, key derivation,
+            //     scheduling) before its answer (0x31 / 0x32) goes on air, then it typically
+            //     transmits with frequency hopping across channels 1/2/3. 50 ms barely catches
+            //     the first attempt and we hop away before the controller finishes its retry
+            //     pattern - this is exactly why io_stealkey was timing out at WAITING_FOR_KEY_TRANSFER.
+            //   - 300 ms is the same window we already use for start frames; matching it keeps
+            //     the implementation simple and doesn't introduce a third magic number.
+            //   - Cost in normal operation: slightly slower hop resumption when the expected
+            //     response actually does NOT come back, which is fine.
+            waitTime = CHANNEL_RESPONSE_START_TIME_US * portTICK_PERIOD_MS / 1000;
           }
           /*else // Start flag without end flag: wait for a response
           {
@@ -360,16 +372,20 @@ namespace iohome
 #endif
           if (ioHome->mRadio->SetFrequency(nextFrequency) != RADIO_ERR_NONE)
           {
-            // Rate-limit this error: under heavy IRQ contention it can fire dozens of times
-            // per second and saturate the console, which made debugging the sniffer mode
-            // hang significantly worse.
+            // A hop failure is NOT actually an error: it just means the radio mutex is held
+            // (almost always by the IRQ handler processing a PREAMBLE/SYNC/RX_DONE on the
+            // current channel). In that case staying on the current channel is the *correct*
+            // thing to do - we shouldn't be hopping away from real activity. So this is now
+            // a heavily-rate-limited DEBUG breadcrumb instead of an error spam. The radio
+            // driver still emits a 60s-rate-limited "mutex held >50ms" line if the SPI bus
+            // is genuinely stuck.
             static int64_t  sLastHopFailUs    = 0;
             static uint32_t sHopFailSuppressed = 0;
             int64_t now = esp_timer_get_time();
-            if ((now - sLastHopFailUs) > 1000000)
+            if ((now - sLastHopFailUs) > 60000000)
             {
-              IO_LOGE("Error: Frequency hopping failed (+{} suppressed in last {} ms)",
-                      (uint32_t)sHopFailSuppressed, (long long)((now - sLastHopFailUs) / 1000));
+              IO_LOGI("Hop deferred: radio mutex busy (+{} hops skipped in last {} s)",
+                      (uint32_t)sHopFailSuppressed, (long long)((now - sLastHopFailUs) / 1000000));
               sLastHopFailUs = now;
               sHopFailSuppressed = 0;
             }
@@ -929,7 +945,22 @@ namespace iohome
 
     // Fake device identity. Pick something that is unlikely to collide with a real device
     // and is not a broadcast address (00 00 3B / 00 00 3F).
-    const uint8_t fakeNodeId[NODE_ID_SIZE] = {0xCA, 0xFE, 0xBA};
+    //
+    // The first byte stays at 0xCA so the fake_id is still recognisable in logs as "ours".
+    // The remaining 2 bytes are randomised on every call: if a previous attempt got far enough
+    // for Tahoma to register the spoofed node_id internally (e.g. we sent 0x29, Tahoma sent
+    // 0x32 but we missed it and Tahoma timed out), Tahoma can mark that node as "do not pair
+    // again for some cooldown" and silently ignore subsequent 0x29s with the same node_id.
+    // This was visible in testing: after the first run got to 0x32, two follow-up runs failed
+    // at WAITING_FOR_KEY_INIT (Tahoma silent after our 0x29). A fresh node_id every time
+    // sidesteps that entirely.
+    uint8_t fakeNodeId[NODE_ID_SIZE] = {0xCA, 0x00, 0x00};
+    {
+      uint8_t rnd[HMAC_SIZE] = {0};   // generate_challenge writes HMAC_SIZE (6) bytes
+      iohome::crypto::generate_challenge(rnd);
+      fakeNodeId[1] = rnd[0];
+      fakeNodeId[2] = rnd[1];
+    }
     const DeviceType fakeType = DeviceType::ROLLER_SHUTTER;
     const uint8_t fakeSubtype = 0x00;
     const Manufacturer fakeManufacturer = Manufacturer::SOMFY;

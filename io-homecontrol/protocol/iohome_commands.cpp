@@ -113,31 +113,49 @@ namespace iohome
                                    uint8_t device_subtype,
                                    Manufacturer manufacturer)
     {
-        // 2W frame, end=true / start=false: we are *answering* the controller's 0x28 - this
-        // is a one-shot terminal reply, the controller takes over the conversation next.
-        // Critically, we must NOT set start=true here: the radio task interprets start=true
-        // as "expect more replies on this channel", which keeps it pinned for 300 ms after
-        // TX and makes us miss the controller's follow-up 0x31 KEY_INIT_TRANSFER on FREQ_CH2.
+        // 2W frame, start=true AND end=true => CTRL0 Order = 0b11 = "Command Group End".
+        // Per Velocet/iown-homecontrol linklayer.md, the discovery answer 0x29 must use this
+        // Order combination (the example in the spec is `D1 00 ... 29 ...` with bits 7-6 = 11),
+        // meaning "First AND Last frame of this session". Sending it as Order=0b10
+        // ("Next in Parallel" - First:No, Last:Yes) - which is what the previous version of this
+        // code did - is protocol-illegal and at least some Tahoma firmwares silently drop the
+        // reply, which is why the StealSystemKey flow never progressed past the 0x29 step.
+        //
+        // Side benefit: the radio task in process_radio_task() inspects is_start(item.frame)
+        // first when scheduling the post-TX wait. With start=true it pins on the current channel
+        // for CHANNEL_RESPONSE_START_TIME_US (300 ms), which is exactly what we want to catch
+        // Tahoma's follow-up 0x31 KEY_INIT_TRANSFER on the same channel.
+        //
         // low_power=false: spoofed device is always on, no need for long preambles.
-        init_frame(frame, true /*is_2w*/, false /*is_start*/, true /*is_end*/, false /*is_lowPower*/);
+        init_frame(frame, true /*is_2w*/, true /*is_start*/, true /*is_end*/, false /*is_lowPower*/);
 
         set_destination(frame, dst_node_id);
         set_source(frame, own_node_id);
 
-        // Encode device info matching the inverse of process_discovery_response():
-        //   data[0..1] : device_type (10 bits) | device_subtype (6 bits)
-        //                device_type   = (data[0] << 2) | (data[1] >> 6)
-        //                device_subtype= data[1] & CMD_PARAM_SUBTYPE_MASK
-        //   data[2..4] : TBD (zero-filled, observed in captures)
-        //   data[5]    : manufacturer ID
+        // Spec example payload (9 bytes):
+        //   FF C0 FE EF EE 0C CC 00 00
+        //   |---| |--------| |  |  |---|
+        //   type/ src_node   |  |  timestamp
+        //   subtype          |  multi-info byte (0xCC observed)
+        //                    manufacturer
+        //
+        // data[0..1] : device_type (10 bits) | device_subtype (6 bits)
+        //              device_type   = (data[0] << 2) | (data[1] >> 6)
+        //              device_subtype= data[1] & CMD_PARAM_SUBTYPE_MASK
+        // data[2..4] : src_node duplicated (3 bytes) - per spec example. Some firmwares
+        //              cross-check this against the frame's src_node field.
+        // data[5]    : manufacturer ID
+        // data[6]    : multi-info byte (spec example uses 0xCC; meaning unknown but observed)
+        // data[7..8] : timestamp / sequence (zero is observed in factory-fresh devices)
         const uint8_t type_byte = static_cast<uint8_t>(device_type);
-        uint8_t data[6];
+        uint8_t data[9];
         data[0] = static_cast<uint8_t>(type_byte >> 2);
         data[1] = static_cast<uint8_t>(((type_byte & 0x03) << 6) | (device_subtype & CMD_PARAM_SUBTYPE_MASK));
-        data[2] = 0x00;
-        data[3] = 0x00;
-        data[4] = 0x00;
+        memcpy(&data[2], own_node_id, NODE_ID_SIZE);
         data[5] = static_cast<uint8_t>(manufacturer);
+        data[6] = 0xCC;
+        data[7] = 0x00;
+        data[8] = 0x00;
 
         return set_command(frame, CMD_DISCOVER_RESPONSE, data, sizeof(data));
     }
