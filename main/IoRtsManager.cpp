@@ -281,6 +281,15 @@ namespace IoRts
                 mIoHome->Begin(IoHomeConfig::GetIoNodeId(), IoHomeConfig::GetIoSystemKey(), IoHomeConfig::isPassiveModeEnabled());
                 mIoHome->ConfigureRadio(IoHomeConfig::GetTxPower());
             }
+            // The RAMSES-II facade shares the same physical radio. It is
+            // dormant until ev_sniff is invoked from the console; merely
+            // constructing it just registers codecs in the global registry
+            // and remembers the radio pointer for later use. We also hand
+            // it the IoHomeControl pointer so it can pause the io-home
+            // receive path (and its frequency-hopping task) before taking
+            // over the radio for RAMSES sniffing.
+            mEvohome = new evohome::EvohomeRamses(mRadio);
+            if (mEvohome != nullptr) mEvohome->SetIoHome(mIoHome);
         }
     }
     void IoRtsManager::InitializeMqtt()

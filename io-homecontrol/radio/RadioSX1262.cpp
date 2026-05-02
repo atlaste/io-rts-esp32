@@ -388,7 +388,7 @@ namespace RadioLinks
         // window and we would miss the first few ms of actuator/controller replies.
         RADIO_ERRCODE err = setStandby(SX126X_STANDBY_XOSC);
         if (err == RADIO_ERR_NONE)
-            err = applyPacketParams(mPreambleLenBits, RX_FIXED_LEN);
+            err = applyPacketParams(mPreambleLenBits, mRxFixedLen);
         if (err == RADIO_ERR_NONE)
             err = clearIrqStatus(SX126X_IRQ_ALL);
         if (err == RADIO_ERR_NONE)
@@ -398,7 +398,7 @@ namespace RadioLinks
         if (err != RADIO_ERR_NONE)
             setRfSwitch(false, false); // back-off: RX did not start, park the switch
         xSemaphoreGive(s1262Mutex);
-        mPayloadLen = RX_FIXED_LEN;
+        mPayloadLen = mRxFixedLen;
         mPreambleDetectedFlag = false;
         mIsReceiveMode = (err == RADIO_ERR_NONE);
         if (err == RADIO_ERR_NONE)
@@ -408,11 +408,11 @@ namespace RadioLinks
                 ESP_LOGI(TAG, "StartReceive OK (freq=%lu, preamble=%u bits, syncBits=%u, fixedLen=%u, status=0x%02X mode=%s)",
                          (unsigned long)mCurrentFrequency, mPreambleLenBits,
                          mSyncWordLenBits == 0 ? 24 : mSyncWordLenBits,
-                         RX_FIXED_LEN, st, statusModeName(st));
+                         mRxFixedLen, st, statusModeName(st));
             else
                 ESP_LOGI(TAG, "StartReceive OK (freq=%lu, preamble=%u bits, syncBits=%u, fixedLen=%u)",
                          (unsigned long)mCurrentFrequency, mPreambleLenBits,
-                         mSyncWordLenBits == 0 ? 24 : mSyncWordLenBits, RX_FIXED_LEN);
+                         mSyncWordLenBits == 0 ? 24 : mSyncWordLenBits, mRxFixedLen);
         }
         else
         {
@@ -529,6 +529,28 @@ namespace RadioLinks
     bool RadioSX1262::isPreambleDetected()
     {
         return mPreambleDetectedFlag.exchange(false);
+    }
+
+    RADIO_ERRCODE RadioSX1262::SetRxFixedLen(uint8_t len)
+    {
+        // Reject 0 (the chip rejects it too) and refuse to grow past the
+        // compile-time stack-buffer cap in handleDio1Irq() - that would
+        // overflow rawBuf and corrupt the stack.
+        if (len == 0 || len > MAX_RX_BUF_LEN)
+            return RADIO_ERR_INVALID_BANDWIDTH;
+        mRxFixedLen = len;
+        // Re-apply the packet params if we already have a full configuration
+        // pushed to the chip; otherwise the value is picked up at the next
+        // StartReceive(). Either way the change becomes live within one full
+        // RX cycle.
+        if (xSemaphoreTake(s1262Mutex, MUTEX_MAX_WAIT_TICKS))
+        {
+            applyPacketParams(mPreambleLenBits, mRxFixedLen);
+            mPayloadLen = mRxFixedLen;
+            xSemaphoreGive(s1262Mutex);
+        }
+        ESP_LOGI(TAG, "SetRxFixedLen: %u", static_cast<unsigned>(len));
+        return RADIO_ERR_NONE;
     }
 
     void RadioSX1262::ManageInterrupt(int gpio)
@@ -707,7 +729,11 @@ namespace RadioLinks
             // improves post-auth response recovery on real hardware. Sized to RX_BUFFER_READ_LEN
             // (64) so we never under-read; in sniffer mode RX_FIXED_LEN is 240 and we still cap
             // to what the chip programmed.
-            uint8_t rawBuf[RX_FIXED_LEN > RX_BUFFER_READ_LEN ? RX_FIXED_LEN : RX_BUFFER_READ_LEN];
+            // Sized to MAX_RX_BUF_LEN so any runtime mRxFixedLen change still
+            // fits without re-allocation. Stack cost is fixed at the worst
+            // case (MAX_RX_BUF_LEN bytes), which is also what we use in
+            // sniffer mode today.
+            uint8_t rawBuf[MAX_RX_BUF_LEN];
             float rssi = -255.0f;
             getRxBufferStatus(payloadLen, startPtr);
             uint8_t readLen = payloadLen;
@@ -720,13 +746,13 @@ namespace RadioLinks
 #ifdef CONFIG_IOHOMECONTROL_SX1262_DIAG_SNIFFER
             // Sniffer mode: trust the chip - we configured a long fixed length and want exactly
             // that many bytes (no overrun into stale FIFO data).
-            if (readLen == 0 || readLen > RX_FIXED_LEN)
-                readLen = RX_FIXED_LEN;
+            if (readLen == 0 || readLen > mRxFixedLen)
+                readLen = mRxFixedLen;
 #else
             // IO-Homecontrol mode: pull RX_BUFFER_READ_LEN bytes if the chip reports less than the
             // configured fixed-length window, so we always have enough chip-level data for the
             // software UART decoder to scan.
-            if (readLen == 0 || readLen < RX_FIXED_LEN)
+            if (readLen == 0 || readLen < mRxFixedLen)
                 readLen = RX_BUFFER_READ_LEN;
             if (readLen > sizeof(rawBuf))
                 readLen = sizeof(rawBuf);
@@ -860,12 +886,12 @@ namespace RadioLinks
                 // is several orders of magnitude more than necessary.
                 if (xSemaphoreTake(s1262Mutex, MUTEX_MAX_WAIT_TICKS))
                 {
-                    applyPacketParams(mPreambleLenBits, RX_FIXED_LEN);
+                    applyPacketParams(mPreambleLenBits, mRxFixedLen);
                     clearIrqStatus(SX126X_IRQ_ALL);
                     setRfSwitch(false, true); // antenna ON before setRx (see StartReceive)
                     if (setRx(SX126X_RX_TIMEOUT_CONTINUOUS) != RADIO_ERR_NONE)
                         setRfSwitch(false, false);
-                    mPayloadLen = RX_FIXED_LEN;
+                    mPayloadLen = mRxFixedLen;
                     xSemaphoreGive(s1262Mutex);
                 }
                 else
@@ -1204,7 +1230,7 @@ namespace RadioLinks
         if (preambleLenBits == 0)
             preambleLenBits = 64; // safety
         if (payloadLen == 0)
-            payloadLen = RX_FIXED_LEN;
+            payloadLen = mRxFixedLen;
 
         // Sync word size has to fit in [0..64] bits, in increments of 8
         uint8_t syncBits = mSyncWordLenBits == 0 ? 24 : mSyncWordLenBits;

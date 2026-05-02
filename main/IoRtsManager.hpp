@@ -5,6 +5,7 @@
 #include "RadioSX1276.hpp"
 #include "RadioSX1262.hpp"
 #include "IoHomeControl.hpp"
+#include "EvohomeRamses.hpp"
 #include "DeviceStorage.hpp"
 
 #include <map>
@@ -20,6 +21,7 @@ namespace IoRts
 
         RadioLinks::RadioModule *mRadio;       // Pointer to radio object used in IoHomeControl object (SX1276 or SX1262 depending on Kconfig)
         iohome::IoHomeControl *mIoHome;        // Pointer to IoHomeControl object used to manage Io-HomeControl protocol
+        evohome::EvohomeRamses *mEvohome = nullptr; // Optional RAMSES-II / Evohome facade sharing the same radio
 
         /// @brief Constructor for IoRtsManager
         IoRtsManager();

@@ -76,6 +76,7 @@ namespace RadioLinks
         RADIO_ERRCODE StopReceive() override;
         RADIO_ERRCODE Send(uint8_t len, uint8_t *buffer, uint16_t preambleLen, uint32_t frequency) override;
         bool isPreambleDetected() override;
+        RADIO_ERRCODE SetRxFixedLen(uint8_t len) override;
 
     private:
         static constexpr const char *TAG = "RadioSX1262";
@@ -139,6 +140,16 @@ namespace RadioLinks
         uint8_t mSyncWord[8] = {};
         uint8_t mSyncWordLenBits = 0;
         uint8_t mPayloadLen = RX_FIXED_LEN; // currently configured fixed payload length
+
+        /// @brief Runtime override of the chip-level RX fixed-length window.
+        ///        Defaults to RX_FIXED_LEN (the compile-time io-home/sniffer
+        ///        choice). Bumped at runtime by alternative protocol stacks
+        ///        (e.g. RAMSES-II) that need a longer capture window. Capped
+        ///        at the rawBuf stack array size in handleDio1Irq().
+        uint8_t mRxFixedLen = RX_FIXED_LEN;
+        // Compile-time max for the RX stack buffer in handleDio1Irq().
+        // Setting mRxFixedLen above this value is rejected by SetRxFixedLen.
+        static constexpr uint8_t MAX_RX_BUF_LEN = 240;
         // True when SetSyncWord was called with the documented IO-Homecontrol sync 55 FF 33 and we
         // therefore overrode the chip-level sync to 0x57 0xFD 0x99. In that mode RX bytes are UART-
         // decoded in software and TX bytes are UART-encoded before being written to the FIFO.

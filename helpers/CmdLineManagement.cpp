@@ -227,6 +227,7 @@ void init_cmdline(IoRts::IoRtsManager *io_rts_manager)
 void init_cmdline_tools()
 {
     register_io_cmdline_tools(sIoRtsManager);
+    register_evohome_cmdline_tools(sIoRtsManager);
     register_misc_cmdline_tools();
     register_network_config_cmdline_tools();
     register_mqtt_config_cmdline_tools();

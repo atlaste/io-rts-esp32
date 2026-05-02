@@ -105,6 +105,15 @@ namespace RadioLinks
         /// @brief Call to know if a preamble has been detected since last call to this method
         /// @return true if a preamble has been detected since last call to this method, false otherwise.
         virtual bool isPreambleDetected() = 0;
+
+        /// @brief Set the chip-level RX payload length used by drivers that
+        ///        operate in fixed-length packet mode (currently SX1262).
+        ///        Default implementation is a no-op for radios that already
+        ///        configure this implicitly (SX1276) - they simply ignore
+        ///        the request.
+        /// @param len Payload length in chip bytes (1..240).
+        /// @return RADIO_ERR_NONE on success, RADIO_ERR_NULL_POINTER on no-op.
+        virtual RADIO_ERRCODE SetRxFixedLen(uint8_t /*len*/) { return RADIO_ERR_NONE; }
     };
 
 }

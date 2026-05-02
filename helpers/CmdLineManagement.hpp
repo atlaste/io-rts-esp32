@@ -27,6 +27,10 @@ extern "C"
     /// @param io_rts_manager Pointer to IoRtsManager object
     void register_io_cmdline_tools(IoRts::IoRtsManager *io_rts_manager);
 
+    /// @brief Register Evohome / RAMSES-II command line tools
+    /// @param io_rts_manager Pointer to IoRtsManager object
+    void register_evohome_cmdline_tools(IoRts::IoRtsManager *io_rts_manager);
+
     /// @brief Initialize hardware console (driver, ...)
     void init_console();
 
