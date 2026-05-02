@@ -668,14 +668,14 @@ namespace RadioLinks
 
         if (logPreambleLine)
         {
-            ESP_LOGI(TAG, "DIO1 IRQ 0x%04X PREAMBLE (+%u suppressed in last %lld s, streak=%u)",
+            ESP_LOGD(TAG, "DIO1 IRQ 0x%04X PREAMBLE (+%u suppressed in last %lld s, streak=%u)",
                      irqStatus, (unsigned)logPreambleSuppressed,
                      (long long)(logPreambleSinceMs / 1000),
                      (unsigned)logPreambleStreak);
         }
         if (shouldLog)
         {
-            ESP_LOGI(TAG, "DIO1 IRQ 0x%04X%s%s%s%s%s%s%s%s%s%s",
+            ESP_LOGD(TAG, "DIO1 IRQ 0x%04X%s%s%s%s%s%s%s%s%s%s",
                      irqStatus,
                      (irqStatus & SX126X_IRQ_TX_DONE)           ? " TX_DONE"           : "",
                      (irqStatus & SX126X_IRQ_RX_DONE)           ? " RX_DONE"           : "",
@@ -768,7 +768,7 @@ namespace RadioLinks
                 }
             }
 #else
-            bool snifferLog = true;
+            bool snifferLog = false;
 #endif
             // If the SPI read failed the buffer is still zeroed and the dump would be misleading.
             if (rdErr != RADIO_ERR_NONE)

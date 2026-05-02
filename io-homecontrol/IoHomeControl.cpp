@@ -424,9 +424,12 @@ namespace iohome
     sLogQueue = xQueueCreate(10, sizeof(LogQueueItem));
     xTaskCreate(process_log_task, "process_log_task", 4096, this, LOG_CALLBACK_PRIORITY, NULL);
 
-    // Create IoDevice status queue and task
+    // Create IoDevice status queue and task. Stack is generously sized (8 KB) because the
+    // sDeviceStatusCallback runs inline on this task and downstream consumers (device storage
+    // save, MQTT discovery JSON serialization, etc.) burn several KB of stack on their own.
+    // 4 KB was empirically too small and produced a stack overflow when MQTT discovery ran.
     sIoDeviceStatusQueue = xQueueCreate(20, sizeof(IoDevice));
-    xTaskCreate(process_iodevicestatus_task, "process_iodevicestatus_task", 4096, NULL, DEVICE_STATUS_CALLBACK_PRIORITY, NULL);
+    xTaskCreate(process_iodevicestatus_task, "process_iodevicestatus_task", 8192, NULL, DEVICE_STATUS_CALLBACK_PRIORITY, NULL);
 
     // Initialize mutex
     sMutex = xSemaphoreCreateMutexStatic(&sMutexBuffer);
