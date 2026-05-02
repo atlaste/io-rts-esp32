@@ -231,6 +231,7 @@ namespace evohome::fields
     extern template struct FixedBytes<2>;
     extern template struct FixedBytes<3>;
     extern template struct FixedBytes<4>;
+    extern template struct FixedBytes<8>;
 
     // ============================================================ HexBlob
     //

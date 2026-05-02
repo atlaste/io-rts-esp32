@@ -36,6 +36,11 @@ namespace evohome
     ///        keeps log lines aligned with the canonical " I --- ..." format.
     const char *to_string(Verb v);
 
+    /// @brief 1-letter compact tag for log lines: I=inform, Q=request,
+    ///        A=answer/reply, W=write. Friendlier than the 2-char mnemonic
+    ///        when the verb is just a hint inside a sentence.
+    const char *verb_tag(Verb v);
+
     /// @brief Try to parse a 2-character mnemonic into a Verb. Accepts both
     ///        "I"/"W" and the padded " I"/" W" variants.
     std::optional<Verb> parse_verb(std::string_view s);
@@ -68,6 +73,14 @@ namespace evohome
     ///        4-digit hex string (e.g. "30C9") for unknown ones. The returned
     ///        pointer is to a string with static lifetime.
     const char *to_string(Code c);
+
+    /// @brief Long-form English description (e.g. "Zone Temperature") for any
+    ///        16-bit code. Falls back to "Unknown 1234" for codes not in our
+    ///        catalogue. Includes codes that are NOT in the Code enum but do
+    ///        appear in real captures (2349, 3EF0, 1FD4, ...). Used in
+    ///        human-readable log output. Returned pointer is to a static
+    ///        thread-local buffer for unknown codes.
+    const char *code_long_name(uint16_t code);
 
     /// @brief Format a 16-bit code as the canonical "30C9" 4-digit hex used
     ///        in logs, regardless of whether it appears in the Code enum.
@@ -114,5 +127,12 @@ namespace evohome
     /// @brief Friendly mnemonic for a device class (e.g. 01 -> "CTL"). Returns
     ///        the 2-digit decimal as a string for unknown classes.
     const char *device_class_name(uint8_t cls);
+
+    /// @brief Long-form English description for a device class
+    ///        (e.g. 01 -> "Controller", 10 -> "OpenTherm Bridge"). Falls back
+    ///        to "Class NN" for unknown classes. Returned pointer is to a
+    ///        static thread-local buffer for unknown classes (rotated, so
+    ///        callers must copy if they need to keep the string).
+    const char *device_class_long_name(uint8_t cls);
 
 } // namespace evohome

@@ -4,20 +4,48 @@
  * @file EvohomeRamses.hpp
  * @brief Top-level facade for the RAMSES-II stack: configures the shared
  *        SX1262 radio for RAMSES, decodes raw chip bytes (sync detect +
- *        Manchester decode + frame parse), then dispatches to the codec
- *        registry.
+ *        UART de-frame + Manchester decode + frame parse), then dispatches
+ *        to the codec registry.
+ *
+ * What is "RAMSES II" anyway?
+ * --------------------------
+ * RAMSES II is NOT an official protocol name - Honeywell never published
+ * one. The community gave the reverse-engineered Honeywell HVAC RF
+ * protocol that name after the early sniffer/gateway projects, and every
+ * downstream library (`ramses_rf`, `ramses_protocol`, `ramses_cpp`,
+ * `evofw3`, ...) inherited it. We follow suit because Googling "RAMSES
+ * 31DA" actually finds something, while "Evohome 31DA" mostly hits
+ * marketing pages.
+ *
+ * Same protocol is used (with vendor-specific opcodes) by:
+ *   - Honeywell Evohome (UK/EU heating: controllers, TRVs, OTB)
+ *   - Honeywell Round / DT2 / DT4 thermostats
+ *   - Resideo (post-Honeywell rebrand) of all of the above
+ *   - Itho Daalderop mechanical ventilation (CO2, RH, fan units)
+ *   - Vasco / Nuaire / Orcon HVAC units
+ *
+ * Wire layout - quick reference
+ * -----------------------------
+ *   carrier    : 868.300 MHz
+ *   modulation : 2-FSK / GFSK, 38.4 kbps, ~50 kHz deviation
+ *   framing    : every protocol byte goes through a UART (start + 8 LSB-
+ *                first data + stop), so the on-air bit pattern of the
+ *                "FF 00 33 55 53" sync is the UART-encoded version, not
+ *                the literal bytes (see SetSyncWord in this file's .cpp
+ *                for the derivation)
+ *   payload    : Manchester-encoded protocol bytes, ended by 0x35 trailer
+ *   header     : 1-byte verb + addr-combo + param flags
+ *   addresses  : up to 3, each 3 bytes (TT class << 18 | NN id)
+ *   opcode     : 2 bytes (e.g. 0x30C9 = Zone Temperature)
+ *   payload    : up to 64 protocol bytes
+ *   checksum   : 1 byte (sum-to-zero)
  *
  * Lifecycle
  * ---------
  * The class is a singleton owned by IoRtsManager. Construction does NOT
  * touch the radio; the io-homecontrol stack stays the active radio user
- * until somebody calls StartSniff().
- *
- * StartSniff() reconfigures the SX1262 for RAMSES (868.3 MHz, 38.4 kbps
- * GFSK, sync word = 0xFF 0x00 0x33 0x55 0x53) and registers a raw-bytes
- * receive callback. While sniffing, the io-homecontrol stack stays
- * suspended (its hop task finds no frames on the radio because the radio
- * is on a different sync word).
+ * until somebody calls StartSniff(), which then pauses io-homecontrol's
+ * RX path (the two protocols share the same chip).
  *
  * StopSniff() puts the radio back to standby. To return to io-homecontrol
  * the easiest path is currently a reboot; a proper "swap profile" API can

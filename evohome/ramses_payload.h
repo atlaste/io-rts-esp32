@@ -121,11 +121,30 @@ namespace evohome
         /// @return std::nullopt if any field returned nullopt.
         static std::optional<Payload> deserialize(std::span<const uint8_t> data);
 
+        /// @brief Same as deserialize() but mutates *this in place. Used by
+        ///        CodecAdapter so that per-codec `describe()` overrides in
+        ///        derived structs are dispatched correctly: the alternative
+        ///        (calling the static deserialize) returns a base Payload
+        ///        and would always shadow-call the base describe(), making
+        ///        per-codec friendly output impossible.
+        ///
+        /// @return std::nullopt if any field returned nullopt. Otherwise the
+        ///         number of bytes the schema actually consumed. The caller
+        ///         should sanity-check this against `data.size()`: a schema
+        ///         that consumes fewer bytes than the payload is a hint the
+        ///         schema is incomplete (Honeywell devices love adding
+        ///         vendor-specific tail fields). The dispatcher logs the
+        ///         delta so we notice and can extend the schema.
+        std::optional<size_t> deserialize_into(std::span<const uint8_t> data);
+
         /// @brief Serialize each field in declaration order into @p out.
         /// @return Number of bytes written.
         size_t serialize(std::span<uint8_t> out) const;
 
-        /// @brief Print "name=value" pairs separated by ", ".
+        /// @brief Print "name=value" pairs separated by ", ". Codec structs
+        ///        may shadow this in the derived type to emit a friendlier
+        ///        single-sentence description (which CodecAdapter then sees
+        ///        because it constructs the derived type before calling).
         void describe(std::ostream &os) const;
     };
 
@@ -151,11 +170,19 @@ namespace evohome
     Payload<std::tuple<Fs...>>::deserialize(std::span<const uint8_t> data)
     {
         Payload p;
+        if (!p.deserialize_into(data)) return std::nullopt;
+        return p;
+    }
+
+    template<typename... Fs>
+    std::optional<size_t>
+    Payload<std::tuple<Fs...>>::deserialize_into(std::span<const uint8_t> data)
+    {
         const uint8_t *cur = data.data();
         const uint8_t *end = data.data() + data.size();
 
-        bool ok = detail::fold_indexed(
-            p.fields,
+        const bool ok = detail::fold_indexed(
+            fields,
             [&](auto &field_inst, size_t /*idx*/) -> bool {
                 using FieldT = std::remove_reference_t<decltype(field_inst)>;
                 auto v = FieldT::deserialize(cur, end);
@@ -166,7 +193,7 @@ namespace evohome
             std::index_sequence_for<Fs...>{});
 
         if (!ok) return std::nullopt;
-        return p;
+        return static_cast<size_t>(cur - data.data());
     }
 
     // ---- Payload<tuple<Fs...>>::serialize ---------------------------------

@@ -284,6 +284,7 @@ namespace evohome::fields
     template struct FixedBytes<2>;
     template struct FixedBytes<3>;
     template struct FixedBytes<4>;
+    template struct FixedBytes<8>;
 
     // -------------------------------------------------------------- HexBlob
 

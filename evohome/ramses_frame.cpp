@@ -182,4 +182,55 @@ namespace evohome
         os << buf;
     }
 
+    void Frame::describe_friendly(std::ostream &os) const
+    {
+        // Pick a sensible "source" address. Most well-formed frames carry
+        // the actual sender in addr0; some controller broadcasts only fill
+        // addr2 (their own ID, repeated) and leave addr0/1 NUL. We accept
+        // both and don't print the third slot to keep the line short.
+        int src_idx = -1;
+        if (has_addr[0] && !addr[0].is_null()) src_idx = 0;
+        else if (has_addr[2] && !addr[2].is_null()) src_idx = 2;
+
+        // Destination: addr1 if present, else addr2 if it's different from
+        // the source we already chose (addr2 is sometimes a duplicate of
+        // addr0, in which case the message is a self-announcement and we
+        // tag it as "(announces)").
+        int dst_idx = -1;
+        if (has_addr[1] && !addr[1].is_null()) dst_idx = 1;
+        else if (has_addr[2] && !addr[2].is_null() && src_idx != 2 &&
+                 !(src_idx >= 0 && addr[2] == addr[src_idx]))
+            dst_idx = 2;
+
+        auto print_addr = [&](int i) {
+            os << device_class_long_name(addr[i].cls) << ' ';
+            addr[i].describe(os);
+        };
+
+        if (src_idx < 0)
+        {
+            os << "(unknown source)";
+        }
+        else
+        {
+            print_addr(src_idx);
+        }
+
+        if (dst_idx < 0)
+        {
+            os << " (broadcasts)";
+        }
+        else if (src_idx >= 0 && addr[dst_idx] == addr[src_idx])
+        {
+            os << " (announces)";
+        }
+        else
+        {
+            os << " -> ";
+            print_addr(dst_idx);
+        }
+
+        os << " : " << code_long_name(opcode) << " [" << verb_tag(verb) << "]";
+    }
+
 } // namespace evohome

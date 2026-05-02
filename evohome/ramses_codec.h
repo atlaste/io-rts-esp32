@@ -21,6 +21,7 @@
 #include "ramses_types.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <functional>
 #include <iosfwd>
 #include <memory>
@@ -95,11 +96,31 @@ namespace evohome
 
         bool parse(std::span<const uint8_t> payload, std::ostream &os) const override
         {
-            auto p = PayloadT::deserialize(payload);
-            if (!p) return false;
-            os << name() << " { ";
-            p->describe(os);
-            os << " }";
+            // Construct PayloadT directly (not via the base Payload's static
+            // deserialize) so that any per-codec describe() override in the
+            // derived struct is dispatched. See PayloadT::deserialize_into
+            // for the rationale.
+            PayloadT p;
+            const auto consumed = p.deserialize_into(payload);
+            if (!consumed) return false;
+            p.describe(os);
+            // Sanity-check: did the schema actually consume the whole
+            // payload? If not, the schema is incomplete (vendor-specific
+            // tail bytes are common) and we surface the leftover so the
+            // schema can be extended later. We still treat the parse as
+            // successful so the friendly description survives.
+            if (*consumed < payload.size())
+            {
+                const size_t extra = payload.size() - *consumed;
+                os << " [+" << extra << "B unparsed: ";
+                for (size_t i = *consumed; i < payload.size(); ++i)
+                {
+                    char buf[4];
+                    std::snprintf(buf, sizeof(buf), "%02X", static_cast<unsigned>(payload[i]));
+                    os << buf;
+                }
+                os << "]";
+            }
             return true;
         }
 

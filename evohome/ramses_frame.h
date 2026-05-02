@@ -73,6 +73,22 @@ namespace evohome
         ///        Note: we do NOT print the seqn (RAMSES does not put one on
         ///        the wire; evofw3 fakes "---" when not parsing locally).
         void describe_header(std::ostream &os) const;
+
+        /// @brief Print a human-readable header instead of the cryptic evofw3
+        ///        format. Examples of what gets produced:
+        ///
+        ///          OpenTherm Bridge 10:046700 (broadcasts)        : Boiler Status [I]
+        ///          RFG100 Gateway 30:112365 -> Controller 01:067362 : Zone Setpoint Override [Q]
+        ///          Controller 01:067362 (announces)               : System Sync [I]
+        ///
+        ///        The address/direction logic is evofw3-aware:
+        ///          - addr0 is the source if present, else addr2.
+        ///          - addr1 is the destination; if NUL we fall back to
+        ///            addr2 only when it differs from addr0 (otherwise we
+        ///            print "(broadcasts)" since the message has no
+        ///            specific recipient).
+        ///          - the verb is appended as a 1-char tag in [...].
+        void describe_friendly(std::ostream &os) const;
     };
 
     /// @brief Parse a fully-decoded protocol-level byte stream into a Frame.

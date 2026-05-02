@@ -306,12 +306,22 @@ namespace evohome
 
         ++mStats.frames_decoded;
 
+        // Boot-relative timestamp, since the device usually has no NTP/RTC
+        // when the user is hacking on this. Convert ms-since-boot to a
+        // canonical HH:MM:SS.mmm string.
+        const uint32_t now_ms = esp_log_timestamp();
+        const unsigned ms = now_ms % 1000;
+        const unsigned s  = (now_ms / 1000) % 60;
+        const unsigned m  = (now_ms / 60000) % 60;
+        const unsigned h  =  now_ms / 3600000;
+        char ts[32];
+        std::snprintf(ts, sizeof(ts), "%02u:%02u:%02u.%03u", h, m, s, ms);
+
         std::ostringstream oss;
         oss.setf(std::ios::fixed);
         oss.precision(1);
-        oss << "RAMSES " << rssi << "dBm @" << (freq / 1000000) << "MHz ";
-        frame->describe_header(oss);
-        oss << " : ";
+        oss << "[" << ts << " " << rssi << "dBm @" << (freq / 1000000) << "MHz] ";
+        frame->describe_friendly(oss);
 
         const ICodec *codec = (mRegistry != nullptr)
             ? mRegistry->find(frame->opcode, frame->verb)
@@ -320,28 +330,31 @@ namespace evohome
         if (codec != nullptr)
         {
             ++mStats.codec_hits;
+            oss << " - ";
             if (!codec->parse(frame->payload_view(), oss))
             {
-                // Schema knows the code but parse failed - dump as hex with
-                // the codec name so we can refine the schema.
+                // Schema knows the code but parse failed - dump the bytes
+                // so we can refine the schema.
                 oss << "[parse failed] ";
                 codec->describe_raw(frame->payload_view(), oss);
             }
         }
-        else
+        else if (frame->payload_len > 0)
         {
             ++mStats.codec_misses;
-            // Unknown opcode/verb: emit the universal hex dump so the user
-            // can grep for it and add a codec.
-            const auto hex4 = code_to_hex4(frame->opcode);
-            oss << "[no codec for " << hex4.data() << "/"
-                << to_string(frame->verb) << "] payload=";
+            // Unknown opcode/verb: append a compact hex dump so the user
+            // can copy/paste it into ramses_rf or add a codec.
+            oss << " - raw=";
             for (uint8_t b : frame->payload_view())
             {
                 char buf[4];
                 std::snprintf(buf, sizeof(buf), "%02X", static_cast<unsigned>(b));
                 oss << buf;
             }
+        }
+        else
+        {
+            ++mStats.codec_misses;
         }
 
         ESP_LOGI(TAG, "%s", oss.str().c_str());
