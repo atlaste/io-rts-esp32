@@ -111,7 +111,7 @@ namespace evohome
         case 0x1298: return "CO2 Level";
         case 0x12A0: return "Indoor Humidity";
         case 0x12B0: return "Window State";
-        case 0x12C0: return "Display Brightness";
+        case 0x12C0: return "Displayed Temperature";
         case 0x12C8: return "Air Quality";
         case 0x1300: return "CH Pressure";
         case 0x1F09: return "System Sync";
@@ -124,8 +124,9 @@ namespace evohome
         case 0x22C9: return "Underfloor Setpoint";
         case 0x22D0: return "System Override";
         case 0x22D9: return "Boiler Setpoint";
-        case 0x22F1: return "HVAC Speed";
-        case 0x22F3: return "HVAC Boost";
+        case 0x22F1: return "Fan Mode";
+        case 0x22F3: return "Fan Boost";
+        case 0x22F7: return "Bypass Mode";
         case 0x2309: return "Zone Setpoint";
         case 0x2349: return "Zone Setpoint Override";
         case 0x2389: return "Average Temperature";
@@ -144,7 +145,7 @@ namespace evohome
         case 0x3150: return "Heat Demand";
         case 0x31D9: return "Fan State";
         case 0x31DA: return "HVAC State";
-        case 0x31E0: return "Fan Switch";
+        case 0x31E0: return "Fan Demand";
         case 0x3200: return "Boiler Output Temp";
         case 0x3210: return "Boiler Return Temp";
         case 0x3220: return "OpenTherm Message";
